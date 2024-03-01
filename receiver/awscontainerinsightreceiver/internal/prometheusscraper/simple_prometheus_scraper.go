@@ -87,8 +87,9 @@ func (ds *SimplePromethuesScraper) GetMetrics() []pmetric.Metrics {
 	// This method will never return metrics because the metrics are collected by the scraper.
 	// This method will ensure the scraper is running
 
-	ds.settings.Logger.Info("static_pod_resources staring scrapping")
-	stores.StartScraping(ds.settings.Logger)
+	// this thing works, now just fixing the podresourcestore
+	//ds.settings.Logger.Info("static_pod_resources staring scrapping")
+	//stores.StartScraping(ds.settings.Logger)
 
 	podresourcesstore := stores.NewPodResourcesStore(ds.settings.Logger)
 	podresourcesstore.GetResourcesInfo("123", "123", "123")

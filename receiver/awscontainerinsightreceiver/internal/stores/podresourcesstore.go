@@ -66,10 +66,6 @@ func NewPodResourcesStore(logger *zap.Logger) *PodResourcesStore {
 			podResourcesClient:          podResourcesClient,
 		}
 
-		instance.AddResourceName("aws.amazon.com/neuroncore")
-		instance.AddResourceName("aws.amazon.com/neuron")
-		instance.AddResourceName("aws.amazon.com/neurondevice")
-
 		go func() {
 			refreshTicker := time.NewTicker(time.Second)
 			for {
@@ -188,6 +184,11 @@ func (p *PodResourcesStore) PrintMaps() {
 		p.logger.Info("ResourceInfo-" + resourceInfo.resourceName + " ; " + resourceInfo.deviceID)
 		p.logger.Info("ContainerInfo-" + containerInfo.containerName + " ; " + containerInfo.podName)
 	}
+}
+
+func (p *PodResourcesStore) UpdateAndPrintMapsManually() {
+	// this also has embedded print statement
+	p.updateMaps()
 }
 
 func (p *PodResourcesStore) Shutdown() {
