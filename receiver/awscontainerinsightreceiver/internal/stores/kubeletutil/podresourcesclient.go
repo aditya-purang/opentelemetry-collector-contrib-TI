@@ -57,7 +57,8 @@ func (p *PodResourcesClient) connectToServer(socket string) (*grpc.ClientConn, e
 		return nil, fmt.Errorf("failed to check socket path: %w", err)
 	}
 
-	ctx, _ := context.WithTimeout(context.Background(), connectionTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
+	defer cancel()
 
 	conn, err := grpc.DialContext(ctx,
 		socket,
@@ -79,7 +80,8 @@ func (p *PodResourcesClient) connectToServer(socket string) (*grpc.ClientConn, e
 }
 
 func (p *PodResourcesClient) ListPods() (*podresourcesapi.ListPodResourcesResponse, error) {
-	ctx, _ := context.WithTimeout(context.Background(), connectionTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
+	defer cancel()
 
 	resp, err := p.delegateClient.List(ctx, &podresourcesapi.ListPodResourcesRequest{})
 	if err != nil {
