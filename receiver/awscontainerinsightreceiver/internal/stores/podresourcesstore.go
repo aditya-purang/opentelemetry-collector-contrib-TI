@@ -66,6 +66,10 @@ func NewPodResourcesStore(logger *zap.Logger) *PodResourcesStore {
 			podResourcesClient:          podResourcesClient,
 		}
 
+		instance.AddResourceName("aws.amazon.com/neuroncore")
+		instance.AddResourceName("aws.amazon.com/neuron")
+		instance.AddResourceName("aws.amazon.com/neurondevice")
+
 		go func() {
 			refreshTicker := time.NewTicker(time.Second)
 			for {
@@ -102,10 +106,10 @@ func (p *PodResourcesStore) updateMaps() {
 	p.containerInfoToResourcesMap = make(map[ContainerInfo][]ResourceInfo)
 	p.resourceToPodContainerMap = make(map[ResourceInfo]ContainerInfo)
 
-	if len(p.resourceNameSet) == 0 {
-		p.logger.Warn("No resource names allowlisted thus skipping updating of maps.")
-		return
-	}
+	//if len(p.resourceNameSet) == 0 {
+	//	p.logger.Warn("No resource names allowlisted thus skipping updating of maps.")
+	//	return
+	//}
 
 	devicePods, err := p.podResourcesClient.ListPods()
 	if err != nil {
@@ -116,6 +120,7 @@ func (p *PodResourcesStore) updateMaps() {
 		return
 	}
 
+	p.logger.Info("PodResources updating device info with result : " + devicePods.String())
 	for _, pod := range devicePods.GetPodResources() {
 		for _, container := range pod.GetContainers() {
 			for _, device := range container.GetDevices() {
@@ -131,11 +136,13 @@ func (p *PodResourcesStore) updateMaps() {
 						resourceName: device.GetResourceName(),
 						deviceID:     deviceID,
 					}
-					_, found := p.resourceNameSet[resourceInfo.resourceName]
-					if found {
-						p.containerInfoToResourcesMap[containerInfo] = append(p.containerInfoToResourcesMap[containerInfo], resourceInfo)
-						p.resourceToPodContainerMap[resourceInfo] = containerInfo
-					}
+					//_, found := p.resourceNameSet[resourceInfo.resourceName]
+					//if found {
+					p.containerInfoToResourcesMap[containerInfo] = append(p.containerInfoToResourcesMap[containerInfo], resourceInfo)
+					p.resourceToPodContainerMap[resourceInfo] = containerInfo
+
+					p.logger.Info("/nContainerInfo : {" + containerInfo.namespace + "_" + containerInfo.podName + "_" + containerInfo.containerName + "}" + " -> ResourceInfo : {" + resourceInfo.resourceName + "_" + resourceInfo.deviceID + "_" + "}")
+					//}
 				}
 			}
 		}
