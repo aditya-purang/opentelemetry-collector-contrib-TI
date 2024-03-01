@@ -86,9 +86,13 @@ func NewSimplePromethuesScraper(opts SimplePromethuesScraperOpts, scraperConfig 
 func (ds *SimplePromethuesScraper) GetMetrics() []pmetric.Metrics {
 	// This method will never return metrics because the metrics are collected by the scraper.
 	// This method will ensure the scraper is running
+
+	ds.settings.Logger.Info("static_pod_resources staring scrapping")
+	stores.StartScraping(ds.settings.Logger)
+
 	podresourcesstore := stores.NewPodResourcesStore(ds.settings.Logger)
 	podresourcesstore.GetResourcesInfo("123", "123", "123")
-	
+
 	if !ds.running {
 		ds.settings.Logger.Info("The scraper is not running, starting up the scraper")
 		err := ds.prometheusReceiver.Start(ds.ctx, ds.host)

@@ -75,8 +75,10 @@ func NewPodResourcesStore(logger *zap.Logger) *PodResourcesStore {
 			for {
 				select {
 				case <-refreshTicker.C:
+					logger.Info("entered refresh tick")
 					instance.refreshTick()
 				case <-instance.ctx.Done():
+					logger.Info("stopping refresh tick")
 					refreshTicker.Stop()
 					return
 				}
@@ -87,6 +89,7 @@ func NewPodResourcesStore(logger *zap.Logger) *PodResourcesStore {
 }
 
 func (p *PodResourcesStore) refreshTick() {
+	p.logger.Info("PodResources entered refreshTick")
 	now := time.Now()
 	if now.Sub(p.lastRefreshed) >= taskTimeout {
 		p.refresh()
@@ -95,7 +98,9 @@ func (p *PodResourcesStore) refreshTick() {
 }
 
 func (p *PodResourcesStore) refresh() {
+	p.logger.Info("PodResources entered refresh")
 	doRefresh := func() {
+		p.logger.Info("PodResources entering update map")
 		p.updateMaps()
 	}
 
