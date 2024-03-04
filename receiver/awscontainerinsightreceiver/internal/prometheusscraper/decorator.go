@@ -26,6 +26,7 @@ const (
 	gpuTemperature         = "DCGM_FI_DEV_GPU_TEMP"
 	gpuPowerDraw           = "DCGM_FI_DEV_POWER_USAGE"
 	neuronCorePerDeviceKey = "neuroncore_per_device_count"
+	neuronHardwareInfoKey  = "neuron_hardware"
 )
 
 var _ stores.CIMetric = (*gpuMetric)(nil)
@@ -225,7 +226,7 @@ func neuronMetricsProcess(md pmetric.Metrics, modifier *MetricModifier) (pmetric
 			neuronHardwareInfo := pmetric.NewMetric()
 			for k := 0; k < metrics.Len(); k++ {
 				m := metrics.At(k)
-				if m.Name() == neuronCorePerDeviceKey {
+				if m.Name() == neuronHardwareInfoKey {
 					neuronHardwareInfo = m
 					break
 				}
