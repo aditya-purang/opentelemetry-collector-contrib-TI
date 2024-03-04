@@ -222,7 +222,7 @@ func neuronMetricsProcess(md pmetric.Metrics, modifier *MetricModifier) (pmetric
 			ils := ilms.At(j)
 			metrics := ils.Metrics()
 
-			neuronHardwareInfo := pmetric.Metric{}
+			neuronHardwareInfo := pmetric.NewMetric()
 			for k := 0; k < metrics.Len(); k++ {
 				m := metrics.At(k)
 				if m.Name() == neuronCorePerDeviceKey {
@@ -231,15 +231,17 @@ func neuronMetricsProcess(md pmetric.Metrics, modifier *MetricModifier) (pmetric
 				}
 			}
 
-			neuronCoresPerDeviceValue, _ := neuronHardwareInfo.Gauge().DataPoints().At(0).Attributes().Get(neuronCorePerDeviceKey)
-			neuronCoresPerDevice := neuronCoresPerDeviceValue.Int()
+			if neuronHardwareInfo.Name() == "" {
+				neuronCoresPerDeviceValue, _ := neuronHardwareInfo.Gauge().DataPoints().At(0).Attributes().Get(neuronCorePerDeviceKey)
+				neuronCoresPerDevice := neuronCoresPerDeviceValue.Int()
 
-			newMetrics := pmetric.NewMetricSlice()
-			for k := 0; k < metrics.Len(); k++ {
-				m := metrics.At(k)
-				modifier.ModifyMetric(m, neuronCoresPerDevice).MoveAndAppendTo(newMetrics)
+				newMetrics := pmetric.NewMetricSlice()
+				for k := 0; k < metrics.Len(); k++ {
+					m := metrics.At(k)
+					modifier.ModifyMetric(m, neuronCoresPerDevice).MoveAndAppendTo(newMetrics)
+				}
+				newMetrics.CopyTo(metrics)
 			}
-			newMetrics.CopyTo(metrics)
 		}
 	}
 	return md, nil
