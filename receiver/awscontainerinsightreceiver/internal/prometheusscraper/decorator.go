@@ -248,25 +248,25 @@ func neuronMetricsProcess(md pmetric.Metrics, modifier *MetricModifier) (pmetric
 	return md, nil
 }
 
-func (dc *decorateConsumer) logMd(md pmetric.Metrics, metricsName string) {
+func (dc *decorateConsumer) logMd(md pmetric.Metrics) {
 	var logMessage strings.Builder
 
-	logMessage.WriteString(fmt.Sprintf("\"%s\" : {\n", metricsName))
+	logMessage.WriteString("\"METRICS_MD\" : {\n")
 	rms := md.ResourceMetrics()
 	for i := 0; i < rms.Len(); i++ {
 		rs := rms.At(i)
 		ilms := rs.ScopeMetrics()
-		logMessage.WriteString(fmt.Sprintf("\tResourceMetric_%d: {\n", i))
+		logMessage.WriteString(fmt.Sprintf("\t\"ResourceMetric_%d\": {\n", i))
 		for j := 0; j < ilms.Len(); j++ {
 			ils := ilms.At(j)
 			metrics := ils.Metrics()
-			logMessage.WriteString(fmt.Sprintf("\t\tScopeMetric_%d: {\n", j))
-			logMessage.WriteString(fmt.Sprintf("\t\tMetrics_%d: [\n", j))
+			logMessage.WriteString(fmt.Sprintf("\t\t\"ScopeMetric_%d\": {\n", j))
+			logMessage.WriteString(fmt.Sprintf("\t\t\"Metrics_%d\": [\n", j))
 
 			for k := 0; k < metrics.Len(); k++ {
 				m := metrics.At(k)
-				logMessage.WriteString(fmt.Sprintf("\t\t\tMetric_%d: {\n", k))
-				logMessage.WriteString(fmt.Sprintf("\t\t\tname: %s,\n", m.Name()))
+				logMessage.WriteString(fmt.Sprintf("\t\t\t\"Metric_%d\": {\n", k))
+				logMessage.WriteString(fmt.Sprintf("\t\t\t\t\"name\": \"%s\",\n", m.Name()))
 
 				var datapoints pmetric.NumberDataPointSlice
 				switch m.Type() {
@@ -278,14 +278,14 @@ func (dc *decorateConsumer) logMd(md pmetric.Metrics, metricsName string) {
 					datapoints = pmetric.NewNumberDataPointSlice()
 				}
 
-				logMessage.WriteString("datapoints: [\n")
+				logMessage.WriteString("\t\t\t\t\"datapoints\": [\n")
 				for yu := 0; yu < datapoints.Len(); yu++ {
-					logMessage.WriteString("{\n")
-					logMessage.WriteString(fmt.Sprintf("attributes: %v,\n", datapoints.At(yu).Attributes().AsRaw()))
-					logMessage.WriteString(fmt.Sprintf("value: %v,\n", datapoints.At(yu).DoubleValue()))
-					logMessage.WriteString("},\n")
+					logMessage.WriteString("\t\t\t\t\t{\n")
+					logMessage.WriteString(fmt.Sprintf("\t\t\t\t\t\t\"attributes\": \"%v\",\n", datapoints.At(yu).Attributes().AsRaw()))
+					logMessage.WriteString(fmt.Sprintf("\t\t\t\t\t\t\"value\": %v,\n", datapoints.At(yu).DoubleValue()))
+					logMessage.WriteString("\t\t\t\t\t},\n")
 				}
-				logMessage.WriteString("],\n")
+				logMessage.WriteString("\t\t\t\t],\n")
 				logMessage.WriteString("\t\t\t},\n")
 			}
 			logMessage.WriteString("\t\t],\n")
