@@ -19,12 +19,13 @@ import (
 )
 
 const (
-	gpuUtil        = "DCGM_FI_DEV_GPU_UTIL"
-	gpuMemUtil     = "DCGM_FI_DEV_FB_USED_PERCENT"
-	gpuMemUsed     = "DCGM_FI_DEV_FB_USED"
-	gpuMemTotal    = "DCGM_FI_DEV_FB_TOTAL"
-	gpuTemperature = "DCGM_FI_DEV_GPU_TEMP"
-	gpuPowerDraw   = "DCGM_FI_DEV_POWER_USAGE"
+	gpuUtil                = "DCGM_FI_DEV_GPU_UTIL"
+	gpuMemUtil             = "DCGM_FI_DEV_FB_USED_PERCENT"
+	gpuMemUsed             = "DCGM_FI_DEV_FB_USED"
+	gpuMemTotal            = "DCGM_FI_DEV_FB_TOTAL"
+	gpuTemperature         = "DCGM_FI_DEV_GPU_TEMP"
+	gpuPowerDraw           = "DCGM_FI_DEV_POWER_USAGE"
+	neuronCorePerDeviceKey = "neuroncore_per_device_count"
 )
 
 var _ stores.CIMetric = (*gpuMetric)(nil)
@@ -97,6 +98,7 @@ type decorateConsumer struct {
 	nextConsumer          consumer.Metrics
 	k8sDecorator          Decorator
 	logger                *zap.Logger
+	podResourcesStore     *stores.PodResourcesStore
 }
 
 func (dc *decorateConsumer) Capabilities() consumer.Capabilities {
@@ -145,7 +147,11 @@ func (dc *decorateConsumer) ConsumeMetrics(ctx context.Context, md pmetric.Metri
 		}
 	}
 
-	dc.logMd(md)
+	dc.logMd(md, "Scrapper_metrics")
+
+	neuronMetrics, _ := neuronMetricsProcess(md, NewMetricModifier(dc.logger, dc.podResourcesStore))
+	dc.logMd(neuronMetrics, "NeuronProcessor_metrics")
+
 	return dc.nextConsumer.ConsumeMetrics(ctx, md)
 }
 
@@ -207,10 +213,43 @@ func (dc *decorateConsumer) Shutdown() error {
 	return errs
 }
 
-func (dc *decorateConsumer) logMd(md pmetric.Metrics) {
+func neuronMetricsProcess(md pmetric.Metrics, modifier *MetricModifier) (pmetric.Metrics, error) {
+	rms := md.ResourceMetrics()
+	for i := 0; i < rms.Len(); i++ {
+		rs := rms.At(i)
+		ilms := rs.ScopeMetrics()
+		for j := 0; j < ilms.Len(); j++ {
+			ils := ilms.At(j)
+			metrics := ils.Metrics()
+
+			neuronHardwareInfo := pmetric.Metric{}
+			for k := 0; k < metrics.Len(); k++ {
+				m := metrics.At(k)
+				if m.Name() == neuronCorePerDeviceKey {
+					neuronHardwareInfo = m
+					break
+				}
+			}
+
+			neuronCoresPerDeviceValue, _ := neuronHardwareInfo.Gauge().DataPoints().At(0).Attributes().Get(neuronCorePerDeviceKey)
+			neuronCoresPerDevice := neuronCoresPerDeviceValue.Int()
+
+			newMetrics := pmetric.NewMetricSlice()
+			for k := 0; k < metrics.Len(); k++ {
+				m := metrics.At(k)
+				modifier.ModifyMetric(m, neuronCoresPerDevice).MoveAndAppendTo(newMetrics)
+				print(newMetrics)
+			}
+			newMetrics.CopyTo(metrics)
+		}
+	}
+	return md, nil
+}
+
+func (dc *decorateConsumer) logMd(md pmetric.Metrics, metricsName string) {
 	var logMessage strings.Builder
 
-	logMessage.WriteString("METRICS_MD : {\n")
+	logMessage.WriteString(fmt.Sprintf("\"%s\" : {\n", metricsName))
 	rms := md.ResourceMetrics()
 	for i := 0; i < rms.Len(); i++ {
 		rs := rms.At(i)
