@@ -248,10 +248,10 @@ func neuronMetricsProcess(md pmetric.Metrics, modifier *MetricModifier) (pmetric
 	return md, nil
 }
 
-func (dc *decorateConsumer) logMd(md pmetric.Metrics) {
+func (dc *decorateConsumer) logMd(md pmetric.Metrics, metricsName string) {
 	var logMessage strings.Builder
 
-	logMessage.WriteString("\"METRICS_MD\" : {\n")
+	logMessage.WriteString(fmt.Sprintf("\"%s\" : {\n", metricsName))
 	rms := md.ResourceMetrics()
 	for i := 0; i < rms.Len(); i++ {
 		rs := rms.At(i)
