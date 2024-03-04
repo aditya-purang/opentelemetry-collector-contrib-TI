@@ -238,7 +238,6 @@ func neuronMetricsProcess(md pmetric.Metrics, modifier *MetricModifier) (pmetric
 			for k := 0; k < metrics.Len(); k++ {
 				m := metrics.At(k)
 				modifier.ModifyMetric(m, neuronCoresPerDevice).MoveAndAppendTo(newMetrics)
-				print(newMetrics)
 			}
 			newMetrics.CopyTo(metrics)
 		}
