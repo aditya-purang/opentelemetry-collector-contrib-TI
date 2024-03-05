@@ -1,7 +1,7 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
-package gpu
+package prometheusscraper
 
 import (
 	"context"
@@ -30,13 +30,32 @@ func (m *MockK8sDecorator) Shutdown() error {
 	return nil
 }
 
-func TestConsumeMetrics(t *testing.T) {
+const (
+	util      = "UTIL"
+	memUtil   = "USED_PERCENT"
+	memUsed   = "FB_USED"
+	memTotal  = "FB_TOTAL"
+	temp      = "TEMP"
+	powerDraw = "POWER_USAGE"
+)
+
+var metricToUnit = map[string]string{
+	util:      "Percent",
+	memUtil:   "Percent",
+	memUsed:   "Bytes",
+	memTotal:  "Bytes",
+	temp:      "None",
+	powerDraw: "None",
+}
+
+func TestConsumeMetricsForGpu(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	dc := &decorateConsumer{
-		containerOrchestrator: "EKS",
-		nextConsumer:          consumertest.NewNop(),
-		k8sDecorator:          &MockK8sDecorator{},
-		logger:                logger,
+	dc := &DecorateConsumer{
+		ContainerOrchestrator: "EKS",
+		NextConsumer:          consumertest.NewNop(),
+		K8sDecorator:          &MockK8sDecorator{},
+		MetricToUnitMap:       metricToUnit,
+		Logger:                logger,
 	}
 	ctx := context.Background()
 
@@ -52,47 +71,47 @@ func TestConsumeMetrics(t *testing.T) {
 		},
 		"unit": {
 			metrics: generateMetrics(map[string]map[string]string{
-				gpuUtil: {
+				util: {
 					"device": "test0",
 				},
-				gpuMemUtil: {
+				memUtil: {
 					"device": "test0",
 				},
-				gpuMemTotal: {
+				memTotal: {
 					"device": "test0",
 				},
-				gpuMemUsed: {
+				memUsed: {
 					"device": "test0",
 				},
-				gpuPowerDraw: {
+				powerDraw: {
 					"device": "test0",
 				},
-				gpuTemperature: {
+				temp: {
 					"device": "test0",
 				},
 			}),
 			want: generateMetrics(map[string]map[string]string{
-				gpuUtil: {
+				util: {
 					"device": "test0",
 					"Unit":   "Percent",
 				},
-				gpuMemUtil: {
+				memUtil: {
 					"device": "test0",
 					"Unit":   "Percent",
 				},
-				gpuMemTotal: {
+				memTotal: {
 					"device": "test0",
 					"Unit":   "Bytes",
 				},
-				gpuMemUsed: {
+				memUsed: {
 					"device": "test0",
 					"Unit":   "Bytes",
 				},
-				gpuPowerDraw: {
+				powerDraw: {
 					"device": "test0",
 					"Unit":   "None",
 				},
-				gpuTemperature: {
+				temp: {
 					"device": "test0",
 					"Unit":   "None",
 				},
@@ -114,13 +133,13 @@ func TestConsumeMetrics(t *testing.T) {
 		},
 		"typeUnchanged": {
 			metrics: generateMetrics(map[string]map[string]string{
-				gpuUtil: {
+				util: {
 					"device": "test0",
 					"Type":   "TestType",
 				},
 			}),
 			want: generateMetrics(map[string]map[string]string{
-				gpuUtil: {
+				util: {
 					"device": "test0",
 					"Type":   "TestType",
 					"Unit":   "Percent",

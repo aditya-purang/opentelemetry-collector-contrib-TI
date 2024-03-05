@@ -1,11 +1,13 @@
-package nueron
+package neuron
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/prometheusscraper"
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/collector/component/componenttest"
 )
 
 const renameMetric = `
@@ -84,15 +86,21 @@ func TestNewNeuronScraperEndToEnd(t *testing.T) {
 		ExpectedMetrics: expectedMetrics,
 	}
 
-	mockedScraperOpts := prometheusscraper.GetMockedScraperOpts(consumer, mockHostInfoProvider{})
+	mockedScraperOpts := prometheusscraper.SimplePromethuesScraperOpts{
+		Ctx:               context.TODO(),
+		TelemetrySettings: componenttest.NewNopTelemetrySettings(),
+		Consumer:          consumer,
+		Host:              componenttest.NewNopHost(),
+		ScraperConfigs:    GetNueronScrapeConfig(mockHostInfoProvider{}),
+		HostInfoProvider:  mockHostInfoProvider{},
+	}
 
 	prometheusscraper.TestSimplePrometheusEndToEnd(prometheusscraper.TestSimplePrometheusEndToEndOpts{
 		T:                   t,
 		Consumer:            consumer,
 		DataReturned:        renameMetric,
 		ScraperOpts:         mockedScraperOpts,
-		ScrapeConfig:        GetNueronScrapeConfig(mockedScraperOpts),
-		MetricRelabelConfig: GetNueronMetricRelabelConfigs(mockedScraperOpts),
+		MetricRelabelConfig: GetNueronMetricRelabelConfigs(mockHostInfoProvider{}),
 	})
 }
 

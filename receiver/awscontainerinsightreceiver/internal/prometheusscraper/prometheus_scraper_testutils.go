@@ -14,11 +14,9 @@ import (
 	"github.com/prometheus/prometheus/discovery"
 	"github.com/prometheus/prometheus/model/relabel"
 	"github.com/stretchr/testify/assert"
-	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/receiver"
-	"go.uber.org/zap"
 )
 
 type MetricLabel struct {
@@ -36,7 +34,6 @@ type TestSimplePrometheusEndToEndOpts struct {
 	Consumer            consumer.Metrics
 	DataReturned        string
 	ScraperOpts         SimplePromethuesScraperOpts
-	ScrapeConfig        *config.ScrapeConfig
 	MetricRelabelConfig []*relabel.Config
 }
 
@@ -78,7 +75,7 @@ func (m MockConsumer) ConsumeMetrics(_ context.Context, md pmetric.Metrics) erro
 }
 
 func TestSimplePrometheusEndToEnd(opts TestSimplePrometheusEndToEndOpts) {
-	scraper, err := NewSimplePromethuesScraper(opts.ScraperOpts, opts.ScrapeConfig)
+	scraper, err := NewSimplePromethuesScraper(opts.ScraperOpts)
 	assert.NoError(opts.T, err)
 
 	// build up a new PR
@@ -150,17 +147,4 @@ func TestSimplePrometheusEndToEnd(opts TestSimplePrometheusEndToEndOpts) {
 	// wait for 2 scrapes, one initiated by us, another by the new scraper process
 	mp.Wg.Wait()
 	mp.Wg.Wait()
-}
-
-func GetMockedScraperOpts(consumer consumer.Metrics, mockHostInfoProvider hostInfoProvider) SimplePromethuesScraperOpts {
-	settings := componenttest.NewNopTelemetrySettings()
-	settings.Logger, _ = zap.NewDevelopment()
-
-	return SimplePromethuesScraperOpts{
-		Ctx:               context.TODO(),
-		TelemetrySettings: settings,
-		Consumer:          consumer,
-		Host:              componenttest.NewNopHost(),
-		HostInfoProvider:  mockHostInfoProvider,
-	}
 }

@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	ci "github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/containerinsight"
-	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/stores"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/prometheusreceiver"
 	"github.com/prometheus/prometheus/config"
 	"go.opentelemetry.io/collector/component"
@@ -20,7 +18,7 @@ type SimplePromethuesScraper struct {
 	ctx                context.Context
 	settings           component.TelemetrySettings
 	host               component.Host
-	hostInfoProvider   hostInfoProvider
+	hostInfoProvider   HostInfoProvider
 	prometheusReceiver receiver.Metrics
 	running            bool
 }
@@ -30,18 +28,17 @@ type SimplePromethuesScraperOpts struct {
 	TelemetrySettings component.TelemetrySettings
 	Consumer          consumer.Metrics
 	Host              component.Host
-	HostInfoProvider  hostInfoProvider
+	HostInfoProvider  HostInfoProvider
 	ScraperConfigs    *config.ScrapeConfig
-	K8sDecorator      Decorator
 	Logger            *zap.Logger
 }
 
-type hostInfoProvider interface {
+type HostInfoProvider interface {
 	GetClusterName() string
 	GetInstanceID() string
 }
 
-func NewSimplePromethuesScraper(opts SimplePromethuesScraperOpts, scraperConfig *config.ScrapeConfig) (*SimplePromethuesScraper, error) {
+func NewSimplePromethuesScraper(opts SimplePromethuesScraperOpts) (*SimplePromethuesScraper, error) {
 	if opts.Consumer == nil {
 		return nil, errors.New("consumer cannot be nil")
 	}
@@ -54,7 +51,7 @@ func NewSimplePromethuesScraper(opts SimplePromethuesScraperOpts, scraperConfig 
 
 	promConfig := prometheusreceiver.Config{
 		PrometheusConfig: &config.Config{
-			ScrapeConfigs: []*config.ScrapeConfig{scraperConfig},
+			ScrapeConfigs: []*config.ScrapeConfig{opts.ScraperConfigs},
 		},
 	}
 
@@ -62,21 +59,26 @@ func NewSimplePromethuesScraper(opts SimplePromethuesScraperOpts, scraperConfig 
 		TelemetrySettings: opts.TelemetrySettings,
 	}
 
-	podresourcesstore := stores.NewPodResourcesStore(opts.Logger)
-	podresourcesstore.AddResourceName("aws.amazon.com/neuroncore")
-	podresourcesstore.AddResourceName("aws.amazon.com/neuron")
-	podresourcesstore.AddResourceName("aws.amazon.com/neurondevice")
+	// podresourcesstore := stores.NewPodResourcesStore(opts.Logger)
+	// podresourcesstore.AddResourceName("aws.amazon.com/neuroncore")
+	// podresourcesstore.AddResourceName("aws.amazon.com/neuron")
+	// podresourcesstore.AddResourceName("aws.amazon.com/neurondevice")
 
-	decoConsumer := decorateConsumer{
-		containerOrchestrator: ci.EKS,
-		nextConsumer:          opts.Consumer,
-		k8sDecorator:          opts.K8sDecorator,
-		logger:                opts.Logger,
-		metricModifier:        *NewMetricModifier(opts.Logger, podresourcesstore),
-	}
+	// decoConsumer := decorateConsumer{
+	// 	containerOrchestrator: ci.EKS,
+	// 	nextConsumer:          opts.Consumer,
+	// 	k8sDecorator:          opts.K8sDecorator,
+	// 	logger:                opts.Logger,
+	// }
+
+	// pod_att_consumer := neuron.PodAttributesDecoratorConsumer{
+	// 	nextConsumer:      &decoConsumer,
+	// 	podResourcesStore: podresourcesstore,
+	// 	logger:            opts.Logger,
+	// }
 
 	promFactory := prometheusreceiver.NewFactory()
-	promReceiver, err := promFactory.CreateMetricsReceiver(opts.Ctx, params, &promConfig, &decoConsumer)
+	promReceiver, err := promFactory.CreateMetricsReceiver(opts.Ctx, params, &promConfig, opts.Consumer)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create prometheus receiver: %w", err)
 	}

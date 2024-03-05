@@ -1,7 +1,7 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
-package nueron
+package neuron
 
 import (
 	"time"
@@ -20,7 +20,7 @@ const (
 	jobName            = "containerInsightsNeuronMonitorScraper"
 )
 
-func GetNueronScrapeConfig(opts prometheusscraper.SimplePromethuesScraperOpts) *config.ScrapeConfig {
+func GetNueronScrapeConfig(hostinfo prometheusscraper.HostInfoProvider) *config.ScrapeConfig {
 
 	return &config.ScrapeConfig{
 		ScrapeInterval: model.Duration(collectionInterval),
@@ -42,11 +42,11 @@ func GetNueronScrapeConfig(opts prometheusscraper.SimplePromethuesScraperOpts) *
 				},
 			},
 		},
-		MetricRelabelConfigs: GetNueronMetricRelabelConfigs(opts),
+		MetricRelabelConfigs: GetNueronMetricRelabelConfigs(hostinfo),
 	}
 }
 
-func GetNueronMetricRelabelConfigs(opts prometheusscraper.SimplePromethuesScraperOpts) []*relabel.Config {
+func GetNueronMetricRelabelConfigs(hostinfo prometheusscraper.HostInfoProvider) []*relabel.Config {
 
 	return []*relabel.Config{
 		{
@@ -81,7 +81,7 @@ func GetNueronMetricRelabelConfigs(opts prometheusscraper.SimplePromethuesScrape
 			SourceLabels: model.LabelNames{"instance_id"},
 			TargetLabel:  "ClusterName",
 			Regex:        relabel.MustNewRegexp("(.*)"),
-			Replacement:  opts.HostInfoProvider.GetClusterName(),
+			Replacement:  hostinfo.GetClusterName(),
 			Action:       relabel.Replace,
 		},
 	}

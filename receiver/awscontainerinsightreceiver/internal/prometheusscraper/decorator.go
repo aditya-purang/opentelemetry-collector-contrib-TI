@@ -17,42 +17,23 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/stores"
 )
 
-const (
-	gpuUtil        = "DCGM_FI_DEV_GPU_UTIL"
-	gpuMemUtil     = "DCGM_FI_DEV_FB_USED_PERCENT"
-	gpuMemUsed     = "DCGM_FI_DEV_FB_USED"
-	gpuMemTotal    = "DCGM_FI_DEV_FB_TOTAL"
-	gpuTemperature = "DCGM_FI_DEV_GPU_TEMP"
-	gpuPowerDraw   = "DCGM_FI_DEV_POWER_USAGE"
-)
-
-var metricToUnit = map[string]string{
-	gpuUtil:        "Percent",
-	gpuMemUtil:     "Percent",
-	gpuMemUsed:     "Bytes",
-	gpuMemTotal:    "Bytes",
-	gpuTemperature: "None",
-	gpuPowerDraw:   "None",
+// Decorator acts as an interceptor of metrics before the scraper sends them to the next designated consumer
+type DecorateConsumer struct {
+	ContainerOrchestrator string
+	NextConsumer          consumer.Metrics
+	K8sDecorator          Decorator
+	MetricToUnitMap       map[string]string
+	Logger                *zap.Logger
 }
 
-// GPU decorator acts as an interceptor of metrics before the scraper sends them to the next designated consumer
-type decorateConsumer struct {
-	containerOrchestrator string
-	nextConsumer          consumer.Metrics
-	k8sDecorator          Decorator
-	metricModifier        MetricModifier
-	logger                *zap.Logger
-}
-
-func (dc *decorateConsumer) Capabilities() consumer.Capabilities {
+func (dc *DecorateConsumer) Capabilities() consumer.Capabilities {
 	return consumer.Capabilities{
 		MutatesData: true,
 	}
 }
 
-func (dc *decorateConsumer) ConsumeMetrics(ctx context.Context, md pmetric.Metrics) error {
+func (dc *DecorateConsumer) ConsumeMetrics(ctx context.Context, md pmetric.Metrics) error {
 	resourceTags := make(map[string]string)
-	md, _ = neuronMetricsProcess(md, &dc.metricModifier)
 	rms := md.ResourceMetrics()
 	for i := 0; i < rms.Len(); i++ {
 		// get resource attributes
@@ -66,22 +47,22 @@ func (dc *decorateConsumer) ConsumeMetrics(ctx context.Context, md pmetric.Metri
 			ms := ilms.At(j).Metrics()
 			for k := 0; k < ms.Len(); k++ {
 				m := ms.At(k)
-				converted := ci.ConvertToFieldsAndTags(m, dc.logger)
+				converted := ci.ConvertToFieldsAndTags(m, dc.Logger)
 				var rcis []*stores.RawContainerInsightsMetric
 				for _, pair := range converted {
-					rcis = append(rcis, stores.NewRawContainerInsightsMetricWithData(ci.TypeGpuContainer, pair.Fields, pair.Tags, dc.logger))
+					rcis = append(rcis, stores.NewRawContainerInsightsMetricWithData(ci.TypeGpuContainer, pair.Fields, pair.Tags, dc.Logger))
 				}
 
 				decorated := dc.decorateMetrics(rcis)
 				dc.updateAttributes(m, decorated)
-				if unit, ok := metricToUnit[m.Name()]; ok {
+				if unit, ok := dc.MetricToUnitMap[m.Name()]; ok {
 					m.SetUnit(unit)
 				}
 			}
 		}
 	}
 	dc.logMd(md)
-	return dc.nextConsumer.ConsumeMetrics(ctx, md)
+	return dc.NextConsumer.ConsumeMetrics(ctx, md)
 }
 
 type Decorator interface {
@@ -89,14 +70,14 @@ type Decorator interface {
 	Shutdown() error
 }
 
-func (dc *decorateConsumer) decorateMetrics(rcis []*stores.RawContainerInsightsMetric) []*stores.RawContainerInsightsMetric {
+func (dc *DecorateConsumer) decorateMetrics(rcis []*stores.RawContainerInsightsMetric) []*stores.RawContainerInsightsMetric {
 	var result []*stores.RawContainerInsightsMetric
-	if dc.containerOrchestrator != ci.EKS {
+	if dc.ContainerOrchestrator != ci.EKS {
 		return result
 	}
 	for _, rci := range rcis {
 		// add tags for EKS
-		out := dc.k8sDecorator.Decorate(rci)
+		out := dc.K8sDecorator.Decorate(rci)
 		if out != nil {
 			result = append(result, out.(*stores.RawContainerInsightsMetric))
 		}
@@ -104,7 +85,7 @@ func (dc *decorateConsumer) decorateMetrics(rcis []*stores.RawContainerInsightsM
 	return result
 }
 
-func (dc *decorateConsumer) updateAttributes(m pmetric.Metric, rcis []*stores.RawContainerInsightsMetric) {
+func (dc *DecorateConsumer) updateAttributes(m pmetric.Metric, rcis []*stores.RawContainerInsightsMetric) {
 	if len(rcis) == 0 {
 		return
 	}
@@ -115,7 +96,7 @@ func (dc *decorateConsumer) updateAttributes(m pmetric.Metric, rcis []*stores.Ra
 	case pmetric.MetricTypeSum:
 		dps = m.Sum().DataPoints()
 	default:
-		dc.logger.Warn("Unsupported metric type", zap.String("metric", m.Name()), zap.String("type", m.Type().String()))
+		dc.Logger.Warn("Unsupported metric type", zap.String("metric", m.Name()), zap.String("type", m.Type().String()))
 	}
 	if dps.Len() == 0 {
 		return
@@ -137,13 +118,13 @@ func (dc *decorateConsumer) updateAttributes(m pmetric.Metric, rcis []*stores.Ra
 	}
 }
 
-func (dc *decorateConsumer) Shutdown() error {
-	if dc.k8sDecorator != nil {
-		return dc.k8sDecorator.Shutdown()
+func (dc *DecorateConsumer) Shutdown() error {
+	if dc.K8sDecorator != nil {
+		return dc.K8sDecorator.Shutdown()
 	}
 	return nil
 }
-func (dc *decorateConsumer) logMd(md pmetric.Metrics) {
+func (dc *DecorateConsumer) logMd(md pmetric.Metrics) {
 	var logMessage strings.Builder
 
 	logMessage.WriteString("\"METRICS_MD\" : {\n")
@@ -190,46 +171,5 @@ func (dc *decorateConsumer) logMd(md pmetric.Metrics) {
 	}
 	logMessage.WriteString("},\n")
 
-	dc.logger.Info(logMessage.String())
-}
-
-func neuronMetricsProcess(md pmetric.Metrics, modifier *MetricModifier) (pmetric.Metrics, error) {
-	rms := md.ResourceMetrics()
-	for i := 0; i < rms.Len(); i++ {
-		rs := rms.At(i)
-		ilms := rs.ScopeMetrics()
-		for j := 0; j < ilms.Len(); j++ {
-			ils := ilms.At(j)
-			metrics := ils.Metrics()
-
-			// neuronHardwareInfo := pmetric.Metric{}
-			// for k := 0; k < metrics.Len(); k++ {
-			// 	m := metrics.At(k)
-			// 	if m.Name() == "neuroncore_per_device_count" {
-			// 		neuronHardwareInfo = m
-			// 		break
-			// 	}
-			// }
-
-			// neuronCoresPerDeviceValue, _ := neuronHardwareInfo.Gauge().DataPoints().At(0).Attributes().Get(neuronCorePerDeviceKey)
-			// neuronCoresPerDevice := neuronCoresPerDeviceValue.Int()
-
-			for k := 0; k < metrics.Len(); k++ {
-				m := metrics.At(k)
-				modifier.AddPodCorrelationAttributes(getMetricDatapoints(m), 2) // need to change this
-			}
-		}
-	}
-	return md, nil
-}
-
-func getMetricDatapoints(m pmetric.Metric) pmetric.NumberDataPointSlice {
-	switch m.Type() {
-	case pmetric.MetricTypeGauge:
-		return m.Gauge().DataPoints()
-	case pmetric.MetricTypeSum:
-		return m.Sum().DataPoints()
-	default:
-		return pmetric.NewNumberDataPointSlice()
-	}
+	dc.Logger.Info(logMessage.String())
 }

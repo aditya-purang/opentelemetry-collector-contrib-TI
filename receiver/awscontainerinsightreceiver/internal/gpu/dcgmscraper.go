@@ -21,6 +21,7 @@ import (
 	"go.uber.org/zap"
 
 	ci "github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/containerinsight"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/prometheusscraper"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/prometheusreceiver"
 )
 
@@ -38,7 +39,7 @@ type DcgmScraper struct {
 	host               component.Host
 	hostInfoProvider   hostInfoProvider
 	prometheusReceiver receiver.Metrics
-	k8sDecorator       Decorator
+	k8sDecorator       prometheusscraper.Decorator
 	running            bool
 }
 
@@ -48,7 +49,7 @@ type DcgmScraperOpts struct {
 	Consumer          consumer.Metrics
 	Host              component.Host
 	HostInfoProvider  hostInfoProvider
-	K8sDecorator      Decorator
+	K8sDecorator      prometheusscraper.Decorator
 	Logger            *zap.Logger
 }
 
@@ -78,11 +79,12 @@ func NewDcgmScraper(opts DcgmScraperOpts) (*DcgmScraper, error) {
 		TelemetrySettings: opts.TelemetrySettings,
 	}
 
-	decoConsumer := decorateConsumer{
-		containerOrchestrator: ci.EKS,
-		nextConsumer:          opts.Consumer,
-		k8sDecorator:          opts.K8sDecorator,
-		logger:                opts.Logger,
+	decoConsumer := prometheusscraper.DecorateConsumer{
+		ContainerOrchestrator: ci.EKS,
+		NextConsumer:          opts.Consumer,
+		K8sDecorator:          opts.K8sDecorator,
+		MetricToUnitMap:       metricToUnit,
+		Logger:                opts.Logger,
 	}
 
 	promFactory := prometheusreceiver.NewFactory()

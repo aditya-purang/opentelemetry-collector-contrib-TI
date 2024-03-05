@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/prometheus/prometheus/config"
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/component/componenttest"
 	"go.uber.org/zap"
@@ -50,7 +49,7 @@ func TestSimplePrometheusScraperBadInputs(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		scraper, err := NewSimplePromethuesScraper(tt, &config.ScrapeConfig{})
+		scraper, err := NewSimplePromethuesScraper(tt)
 
 		assert.Error(t, err)
 		assert.Nil(t, scraper)

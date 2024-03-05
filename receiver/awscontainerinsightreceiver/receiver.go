@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/gpu"
-	nueron "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/neuron"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/neuron"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/prometheusscraper"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
@@ -105,17 +105,7 @@ func (acir *awsContainerInsightReceiver) Start(ctx context.Context, host compone
 			acir.settings.Logger.Debug("Unable to start dcgm scraper", zap.Error(err))
 		}
 
-		simplePrometheusScraperOpts := prometheusscraper.SimplePromethuesScraperOpts{
-			Ctx:               ctx,
-			TelemetrySettings: acir.settings,
-			Consumer:          acir.nextConsumer,
-			Host:              host,
-			HostInfoProvider:  hostinfo,
-			K8sDecorator:      k8sDecorator,
-			Logger:            acir.settings.Logger,
-		}
-
-		err = acir.initNeuronScraper(simplePrometheusScraperOpts)
+		err = acir.initNeuronScraper(ctx, host, hostinfo, k8sDecorator)
 		if err != nil {
 			acir.settings.Logger.Debug("Unable to start neuron scraper", zap.Error(err))
 		}
@@ -211,13 +201,41 @@ func (acir *awsContainerInsightReceiver) initDcgmScraper(ctx context.Context, ho
 	return err
 }
 
-func (acir *awsContainerInsightReceiver) initNeuronScraper(opts prometheusscraper.SimplePromethuesScraperOpts) error {
+func (acir *awsContainerInsightReceiver) initNeuronScraper(ctx context.Context, host component.Host, hostinfo *hostInfo.Info, decorator *stores.K8sDecorator) error {
 	// if !acir.config.EnableNeuronMetric {
 	// 	return nil
 	// }
 
+	decoConsumer := prometheusscraper.DecorateConsumer{
+		ContainerOrchestrator: ci.EKS,
+		NextConsumer:          acir.nextConsumer,
+		K8sDecorator:          decorator,
+		Logger:                acir.settings.Logger,
+	}
+
+	podresourcesstore := stores.NewPodResourcesStore(acir.settings.Logger)
+	podresourcesstore.AddResourceName("aws.amazon.com/neuroncore")
+	podresourcesstore.AddResourceName("aws.amazon.com/neuron")
+	podresourcesstore.AddResourceName("aws.amazon.com/neurondevice")
+
+	podAttributesDecoratorConsumer := neuron.PodAttributesDecoratorConsumer{
+		NextConsumer:      &decoConsumer,
+		PodResourcesStore: podresourcesstore,
+		Logger:            acir.settings.Logger,
+	}
+
+	scraperOpts := prometheusscraper.SimplePromethuesScraperOpts{
+		Ctx:               ctx,
+		TelemetrySettings: acir.settings,
+		Consumer:          &podAttributesDecoratorConsumer,
+		Host:              host,
+		ScraperConfigs:    neuron.GetNueronScrapeConfig(hostinfo),
+		HostInfoProvider:  hostinfo,
+		Logger:            acir.settings.Logger,
+	}
+
 	var err error
-	acir.neuronMonitorScraper, err = prometheusscraper.NewSimplePromethuesScraper(opts, nueron.GetNueronScrapeConfig(opts))
+	acir.neuronMonitorScraper, err = prometheusscraper.NewSimplePromethuesScraper(scraperOpts)
 	return err
 }
 
