@@ -228,6 +228,8 @@ func neuronMetricsProcess(md pmetric.Metrics, modifier *MetricModifier) (pmetric
 				m := metrics.At(k)
 				if m.Name() == neuronHardwareInfoKey {
 					neuronHardwareInfo = m
+					modifier.logger.Info("hardwareInfoObjectType : " + m.Type().String())
+					modifier.logger.Info(fmt.Sprintf("hardwareInfoObject : %v", neuronHardwareInfo.Gauge().DataPoints().At(0).Attributes().AsRaw()))
 					break
 				}
 			}
@@ -235,13 +237,24 @@ func neuronMetricsProcess(md pmetric.Metrics, modifier *MetricModifier) (pmetric
 			if neuronHardwareInfo.Name() == "" {
 				neuronCoresPerDeviceValue, _ := neuronHardwareInfo.Gauge().DataPoints().At(0).Attributes().Get(neuronCorePerDeviceKey)
 				neuronCoresPerDevice := neuronCoresPerDeviceValue.Int()
+				modifier.logger.Info("neuron_hardware_info found and value of nc_per_core is " + neuronCoresPerDeviceValue.Str())
 
 				newMetrics := pmetric.NewMetricSlice()
 				for k := 0; k < metrics.Len(); k++ {
 					m := metrics.At(k)
-					modifier.ModifyMetric(m, neuronCoresPerDevice).MoveAndAppendTo(newMetrics)
+					modifier.logger.Info("modifying " + m.Name())
+					modifiedSlice := modifier.ModifyMetric(m, neuronCoresPerDevice)
+
+					for ki := 0; ki < modifiedSlice.Len(); ki++ {
+						modifiedMetric := modifiedSlice.At(ki)
+						modifier.logger.Info(fmt.Sprintf("modified metric gauge: %s => %v", modifiedMetric.Name(), modifiedMetric.Gauge()))
+					}
+
+					modifiedSlice.MoveAndAppendTo(newMetrics)
 				}
 				newMetrics.CopyTo(metrics)
+			} else {
+				modifier.logger.Info("neuron_hardware_info not found")
 			}
 		}
 	}
