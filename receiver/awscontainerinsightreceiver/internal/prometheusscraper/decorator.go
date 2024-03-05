@@ -151,7 +151,7 @@ func (dc *decorateConsumer) Shutdown() error {
 func (dc *decorateConsumer) logMd(md pmetric.Metrics, mdName string) {
 	var logMessage strings.Builder
 
-	logMessage.WriteString("\"METRICS_MD\" : {\n")
+	logMessage.WriteString(fmt.Sprintf("\"%s\" : {\n", mdName))
 	rms := md.ResourceMetrics()
 	for i := 0; i < rms.Len(); i++ {
 		rs := rms.At(i)
