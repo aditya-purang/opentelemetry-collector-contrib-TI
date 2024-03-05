@@ -73,7 +73,7 @@ func NewMetricModifier(logger *zap.Logger, podResourcesStore *stores.PodResource
 	return d
 }
 
-func (d *MetricModifier) ModifyMetric(originalMetric pmetric.Metric) pmetric.MetricSlice {
+func (d *MetricModifier) ModifyMetric(originalMetric pmetric.Metric) *pmetric.MetricSlice {
 	// only decorate GPU metrics
 	// another option is to separate GPU of its own pipeline to minimize extra processing of metrics
 
@@ -92,42 +92,43 @@ func (d *MetricModifier) ModifyMetric(originalMetric pmetric.Metric) pmetric.Met
 	originalMetricName := originalMetric.Name()
 	d.logger.Info("MetricModifier metric name : " + originalMetricName)
 	metricDatapoints := GetMetricDatapoints(originalMetric)
-	slice := createAggregatatedSumMetrics(originalMetric, metricDatapoints)
+	slice := d.createAggregatatedSumMetrics(originalMetric, metricDatapoints)
 	d.logSlice(slice, "MetricModifier slice received after aggregation")
 	slice.MoveAndAppendTo(newMetricSlice)
 	d.logSlice(&newMetricSlice, "MetricModifier new metric slice after merging aggregation slice")
-	finalSlice := duplicateMetrics(newMetricSlice, originalMetricName, metricDatapoints)
-	d.logSlice(&finalSlice, "MetricModifier final slice after duplication")
+	finalSlice := d.duplicateMetrics(newMetricSlice, originalMetricName, metricDatapoints)
+	d.logSlice(finalSlice, "MetricModifier final slice after duplication")
 	return finalSlice
 }
 
-func createAggregatatedSumMetrics(originalMetric pmetric.Metric, metricDatapoints pmetric.NumberDataPointSlice) *pmetric.MetricSlice {
+func (md *MetricModifier) createAggregatatedSumMetrics(originalMetric pmetric.Metric, metricDatapoints pmetric.NumberDataPointSlice) *pmetric.MetricSlice {
 	slice := pmetric.NewMetricSlice()
 	if subtypeKey, exists := metricNameToSubtypeAttributeKey[originalMetric.Name()]; exists && originalMetric.Type() == pmetric.MetricTypeSum {
-		aggregatedMetric := pmetric.NewMetric()
+		aggregatedMetric := slice.AppendEmpty()
 
 		aggregatedMetric.SetName(originalMetric.Name() + aggregated_metric_suffix)
 		sum := aggregatedMetric.SetEmptySum()
 
+		md.logger.Info("MetricModifier aggregated name : " + aggregatedMetric.Name())
+
 		aggregatedDatapoint := sum.DataPoints().AppendEmpty()
-		metricDatapoints.At(0).CopyTo(aggregatedDatapoint)
+		metricDatapoints.At(0).Attributes().CopyTo(aggregatedDatapoint.Attributes())
 		aggregatedDatapoint.Attributes().Remove(subtypeKey)
 		aggregatedValue := 0.0
 		for i := 0; i < metricDatapoints.Len(); i++ {
 			originalDatapoint := metricDatapoints.At(i)
 			aggregatedValue += originalDatapoint.DoubleValue()
 
-			newNameMetric := pmetric.NewMetric()
+			newNameMetric := slice.AppendEmpty()
 			newNameSum := newNameMetric.SetEmptySum()
 			newNameDatapoint := newNameSum.DataPoints().AppendEmpty()
 			originalDatapoint.CopyTo(newNameDatapoint)
 			subtypeValue, _ := newNameDatapoint.Attributes().Get(subtypeKey)
 			newNameMetric.SetName(originalMetric.Name() + "_" + subtypeValue.Str())
-			newNameMetric.CopyTo(slice.AppendEmpty())
 		}
 		aggregatedDatapoint.SetDoubleValue(aggregatedValue)
-
-		aggregatedMetric.CopyTo(slice.AppendEmpty())
+		aggregatedDatapoint.SetIntValue(int64(aggregatedValue))
+		md.logger.Info(fmt.Sprintf("MetricModifier aggregated metric : %s => %v %v", aggregatedMetric.Name(), aggregatedMetric.Sum().DataPoints().At(0).Attributes().AsRaw(), aggregatedMetric.Sum().DataPoints().At(0).DoubleValue()))
 	} else {
 		originalMetric.CopyTo(slice.AppendEmpty())
 	}
@@ -135,7 +136,7 @@ func createAggregatatedSumMetrics(originalMetric pmetric.Metric, metricDatapoint
 	return &slice
 }
 
-func duplicateMetrics(metricsSlice pmetric.MetricSlice, originalMetricName string, originalMetricDatapoints pmetric.NumberDataPointSlice) pmetric.MetricSlice {
+func (md *MetricModifier) duplicateMetrics(metricsSlice pmetric.MetricSlice, originalMetricName string, originalMetricDatapoints pmetric.NumberDataPointSlice) *pmetric.MetricSlice {
 	newMetricsSlice := pmetric.NewMetricSlice()
 	duplicateTypePrefix := metricsToBeDuplicated[originalMetricName]
 
@@ -158,7 +159,7 @@ func duplicateMetrics(metricsSlice pmetric.MetricSlice, originalMetricName strin
 		}
 	}
 
-	return newMetricsSlice
+	return &newMetricsSlice
 }
 
 func duplicateMetricForType(metric pmetric.Metric, duplicateType string) *pmetric.Metric {
