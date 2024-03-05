@@ -6,6 +6,7 @@ package prometheusscraper
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"go.opentelemetry.io/collector/consumer"
@@ -237,7 +238,7 @@ func podCorrelationProcess(md pmetric.Metrics, modifier *MetricModifier) (pmetri
 			}
 
 			neuronCoresPerDeviceValue, _ := neuronHardwareInfo.Sum().DataPoints().At(0).Attributes().Get(neuronCorePerDeviceKey)
-			neuronCoresPerDevice := neuronCoresPerDeviceValue.Int()
+			neuronCoresPerDevice, _ := strconv.Atoi(neuronCoresPerDeviceValue.AsString())
 
 			for k := 0; k < metrics.Len(); k++ {
 				m := metrics.At(k)

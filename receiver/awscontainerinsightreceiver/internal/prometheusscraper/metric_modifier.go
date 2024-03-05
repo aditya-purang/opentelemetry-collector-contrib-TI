@@ -178,14 +178,17 @@ func GetMetricDatapoints(m pmetric.Metric) pmetric.NumberDataPointSlice {
 	}
 }
 
-func (d *MetricModifier) AddPodCorrelationAttributes(metricDatapoints pmetric.NumberDataPointSlice, neuronCoresPerDevice int64) {
+func (d *MetricModifier) AddPodCorrelationAttributes(metricDatapoints pmetric.NumberDataPointSlice, neuronCoresPerDevice int) {
 	for i := 0; i < metricDatapoints.Len(); i++ {
 		attributes := metricDatapoints.At(i).Attributes()
 		neuronCoreIndex, neuronCoreIndexPresent := attributes.Get(neuronCoreAttributeKey)
 		if neuronCoreIndexPresent {
-			neuronDeviceIndex := neuronCoreIndex.Int() / neuronCoresPerDevice
-			neuronDeviceIndexString := strconv.FormatInt(neuronDeviceIndex, 10)
-			neuronCoreIndexString := strconv.FormatInt(neuronCoreIndex.Int(), 10)
+			d.logger.Info("neuronCoreIndex string= " + neuronCoreIndex.AsString())
+			neuronCoreIndexIntVal, _ := strconv.Atoi(neuronCoreIndex.AsString())
+			neuronDeviceIndex := neuronCoreIndexIntVal / neuronCoresPerDevice
+
+			neuronDeviceIndexString := strconv.Itoa(neuronDeviceIndex)
+			neuronCoreIndexString := strconv.Itoa(neuronCoreIndexIntVal)
 
 			containerInfo := d.podResourcesStore.GetContainerInfo(neuronCoreIndexString, neuronCoreResourceName)
 			if containerInfo == nil {
@@ -195,7 +198,7 @@ func (d *MetricModifier) AddPodCorrelationAttributes(metricDatapoints pmetric.Nu
 					containerInfo = d.podResourcesStore.GetContainerInfo(neuronDeviceIndexString, neuronDeviceResourceNameAlt)
 				}
 			}
-			attributes.PutStr(neuronDeviceAttributeKey, strconv.FormatInt(neuronDeviceIndex, 10))
+			attributes.PutStr(neuronDeviceAttributeKey, strconv.Itoa(neuronCoreIndexIntVal))
 
 			if containerInfo != nil {
 				attributes.PutStr("ContainerName", containerInfo.ContainerName)
@@ -205,7 +208,7 @@ func (d *MetricModifier) AddPodCorrelationAttributes(metricDatapoints pmetric.Nu
 			}
 		} else {
 			neuronDeviceIndex, neuronDeviceIndexPresent := attributes.Get(neuronDeviceAttributeKey)
-			neuronDeviceIndexString := strconv.FormatInt(neuronDeviceIndex.Int(), 10)
+			neuronDeviceIndexString := neuronDeviceIndex.AsString()
 			if neuronDeviceIndexPresent {
 				containerInfo := d.podResourcesStore.GetContainerInfo(neuronDeviceIndexString, neuronDeviceResourceName)
 				if containerInfo == nil {
