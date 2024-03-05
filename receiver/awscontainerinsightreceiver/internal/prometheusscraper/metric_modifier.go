@@ -1,10 +1,12 @@
 package prometheusscraper
 
 import (
+	"fmt"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/stores"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.uber.org/zap"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -88,9 +90,15 @@ func (d *MetricModifier) ModifyMetric(originalMetric pmetric.Metric) pmetric.Met
 	*/
 
 	originalMetricName := originalMetric.Name()
+	d.logger.Info("MetricModifier metric name : " + originalMetricName)
 	metricDatapoints := GetMetricDatapoints(originalMetric)
-	createAggregatatedSumMetrics(originalMetric, metricDatapoints).MoveAndAppendTo(newMetricSlice)
-	return duplicateMetrics(newMetricSlice, originalMetricName, metricDatapoints)
+	slice := createAggregatatedSumMetrics(originalMetric, metricDatapoints)
+	slice.MoveAndAppendTo(newMetricSlice)
+	d.logSlice(slice, "intermediate slice")
+	finalSlice := duplicateMetrics(newMetricSlice, originalMetricName, metricDatapoints)
+	d.logSlice(&finalSlice, "final slice")
+
+	return finalSlice
 }
 
 func createAggregatatedSumMetrics(originalMetric pmetric.Metric, metricDatapoints pmetric.NumberDataPointSlice) *pmetric.MetricSlice {
@@ -224,4 +232,22 @@ func (d *MetricModifier) AddPodCorrelationAttributes(metricDatapoints pmetric.Nu
 			}
 		}
 	}
+}
+
+func (d *MetricModifier) logSlice(slice *pmetric.MetricSlice, name string) {
+	var logMessage strings.Builder
+
+	logMessage.WriteString(fmt.Sprintf("printing Slice %s: {", name))
+	for i := 0; i < slice.Len(); i++ {
+		metric := slice.At(i)
+		dps := GetMetricDatapoints(metric)
+
+		logMessage.WriteString("{")
+		logMessage.WriteString("name= " + metric.Name())
+		logMessage.WriteString(", unit= " + metric.Type().String())
+		logMessage.WriteString(fmt.Sprintf(", datapoints= %v", dps))
+		logMessage.WriteString("}, ")
+	}
+	logMessage.WriteString(" }")
+	d.logger.Info(logMessage.String())
 }
