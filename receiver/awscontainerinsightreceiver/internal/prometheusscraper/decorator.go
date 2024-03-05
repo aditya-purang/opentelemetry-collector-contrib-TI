@@ -229,13 +229,13 @@ func neuronMetricsProcess(md pmetric.Metrics, modifier *MetricModifier) (pmetric
 				if m.Name() == neuronHardwareInfoKey {
 					neuronHardwareInfo = m
 					modifier.logger.Info("hardwareInfoObjectType : " + m.Type().String())
-					modifier.logger.Info(fmt.Sprintf("hardwareInfoObject : %v", neuronHardwareInfo.Gauge().DataPoints().At(0).Attributes().AsRaw()))
+					modifier.logger.Info(fmt.Sprintf("hardwareInfoObject : %v", neuronHardwareInfo.Sum().DataPoints().At(0).Attributes().AsRaw()))
 					break
 				}
 			}
 
 			if neuronHardwareInfo.Name() == "" {
-				neuronCoresPerDeviceValue, _ := neuronHardwareInfo.Gauge().DataPoints().At(0).Attributes().Get(neuronCorePerDeviceKey)
+				neuronCoresPerDeviceValue, _ := neuronHardwareInfo.Sum().DataPoints().At(0).Attributes().Get(neuronCorePerDeviceKey)
 				neuronCoresPerDevice := neuronCoresPerDeviceValue.Int()
 				modifier.logger.Info("neuron_hardware_info found and value of nc_per_core is " + neuronCoresPerDeviceValue.Str())
 
