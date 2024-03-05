@@ -5,7 +5,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.uber.org/zap"
 	"strconv"
-	"strings"
 )
 
 const (
@@ -77,9 +76,9 @@ func (d *MetricModifier) ModifyMetric(originalMetric pmetric.Metric) pmetric.Met
 	// another option is to separate GPU of its own pipeline to minimize extra processing of metrics
 
 	newMetricSlice := pmetric.NewMetricSlice()
-	if !strings.Contains(originalMetric.Name(), awsNeuronMetric) {
-		return newMetricSlice
-	}
+	//if _, isNeuronMetric := metricsToBeDuplicated[originalMetric.Name()]; !isNeuronMetric {
+	//	return newMetricSlice
+	//}
 
 	/*
 		1. add pod correlation : done, should work
