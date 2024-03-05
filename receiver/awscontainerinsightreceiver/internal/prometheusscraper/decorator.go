@@ -18,12 +18,14 @@ import (
 )
 
 const (
-	gpuUtil        = "DCGM_FI_DEV_GPU_UTIL"
-	gpuMemUtil     = "DCGM_FI_DEV_FB_USED_PERCENT"
-	gpuMemUsed     = "DCGM_FI_DEV_FB_USED"
-	gpuMemTotal    = "DCGM_FI_DEV_FB_TOTAL"
-	gpuTemperature = "DCGM_FI_DEV_GPU_TEMP"
-	gpuPowerDraw   = "DCGM_FI_DEV_POWER_USAGE"
+	gpuUtil                = "DCGM_FI_DEV_GPU_UTIL"
+	gpuMemUtil             = "DCGM_FI_DEV_FB_USED_PERCENT"
+	gpuMemUsed             = "DCGM_FI_DEV_FB_USED"
+	gpuMemTotal            = "DCGM_FI_DEV_FB_TOTAL"
+	gpuTemperature         = "DCGM_FI_DEV_GPU_TEMP"
+	gpuPowerDraw           = "DCGM_FI_DEV_POWER_USAGE"
+	neuronCorePerDeviceKey = "neuroncore_per_device_count"
+	neuronHardwareInfoKey  = "neuron_hardware"
 )
 
 var metricToUnit = map[string]string{
@@ -202,21 +204,21 @@ func neuronMetricsProcess(md pmetric.Metrics, modifier *MetricModifier) (pmetric
 			ils := ilms.At(j)
 			metrics := ils.Metrics()
 
-			// neuronHardwareInfo := pmetric.Metric{}
-			// for k := 0; k < metrics.Len(); k++ {
-			// 	m := metrics.At(k)
-			// 	if m.Name() == "neuroncore_per_device_count" {
-			// 		neuronHardwareInfo = m
-			// 		break
-			// 	}
-			// }
+			neuronHardwareInfo := pmetric.Metric{}
+			for k := 0; k < metrics.Len(); k++ {
+				m := metrics.At(k)
+				if m.Name() == neuronHardwareInfoKey {
+					neuronHardwareInfo = m
+					break
+				}
+			}
 
-			// neuronCoresPerDeviceValue, _ := neuronHardwareInfo.Gauge().DataPoints().At(0).Attributes().Get(neuronCorePerDeviceKey)
-			// neuronCoresPerDevice := neuronCoresPerDeviceValue.Int()
+			neuronCoresPerDeviceValue, _ := neuronHardwareInfo.Sum().DataPoints().At(0).Attributes().Get(neuronCorePerDeviceKey)
+			neuronCoresPerDevice := neuronCoresPerDeviceValue.Int()
 
 			for k := 0; k < metrics.Len(); k++ {
 				m := metrics.At(k)
-				modifier.AddPodCorrelationAttributes(getMetricDatapoints(m), 2) // need to change this
+				modifier.AddPodCorrelationAttributes(getMetricDatapoints(m), neuronCoresPerDevice) // need to change this
 			}
 		}
 	}
