@@ -181,8 +181,7 @@ func GetMetricDatapoints(m pmetric.Metric) pmetric.NumberDataPointSlice {
 func (d *MetricModifier) AddPodCorrelationAttributes(metricDatapoints pmetric.NumberDataPointSlice, neuronCoresPerDevice int) {
 	for i := 0; i < metricDatapoints.Len(); i++ {
 		attributes := metricDatapoints.At(i).Attributes()
-		neuronCoreIndex, neuronCoreIndexPresent := attributes.Get(neuronCoreAttributeKey)
-		if neuronCoreIndexPresent {
+		if neuronCoreIndex, neuronCoreIndexPresent := attributes.Get(neuronCoreAttributeKey); neuronCoreIndexPresent {
 			d.logger.Info("neuronCoreIndex string= " + neuronCoreIndex.AsString())
 			neuronCoreIndexIntVal, _ := strconv.Atoi(neuronCoreIndex.AsString())
 			neuronDeviceIndex := neuronCoreIndexIntVal / neuronCoresPerDevice
@@ -206,8 +205,9 @@ func (d *MetricModifier) AddPodCorrelationAttributes(metricDatapoints pmetric.Nu
 				attributes.PutStr("Namespace", containerInfo.Namespace)
 				attributes.PutStr("FullPodname", containerInfo.PodName+"."+containerInfo.Namespace)
 			}
-		} else {
-			neuronDeviceIndex, neuronDeviceIndexPresent := attributes.Get(neuronDeviceAttributeKey)
+		}
+
+		if neuronDeviceIndex, neuronDeviceIndexPresent := attributes.Get(neuronDeviceAttributeKey); neuronDeviceIndexPresent {
 			neuronDeviceIndexString := neuronDeviceIndex.AsString()
 			if neuronDeviceIndexPresent {
 				containerInfo := d.podResourcesStore.GetContainerInfo(neuronDeviceIndexString, neuronDeviceResourceName)
@@ -224,6 +224,5 @@ func (d *MetricModifier) AddPodCorrelationAttributes(metricDatapoints pmetric.Nu
 				}
 			}
 		}
-
 	}
 }
