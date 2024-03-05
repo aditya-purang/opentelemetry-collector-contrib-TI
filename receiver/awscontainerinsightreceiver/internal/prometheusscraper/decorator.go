@@ -54,7 +54,7 @@ func (dc *decorateConsumer) Capabilities() consumer.Capabilities {
 
 func (dc *decorateConsumer) ConsumeMetrics(ctx context.Context, md pmetric.Metrics) error {
 	resourceTags := make(map[string]string)
-	md, _ = neuronMetricsProcess(md, &dc.metricModifier)
+	md, _ = podCorrelationProcess(md, &dc.metricModifier)
 	rms := md.ResourceMetrics()
 	for i := 0; i < rms.Len(); i++ {
 		// get resource attributes
@@ -82,7 +82,10 @@ func (dc *decorateConsumer) ConsumeMetrics(ctx context.Context, md pmetric.Metri
 			}
 		}
 	}
-	dc.logMd(md)
+	dc.logMd(md, "Scrapper_md")
+
+	md, _ = neuronMetricsProcess(md, &dc.metricModifier)
+	dc.logMd(md, "Neuron_md")
 	return dc.nextConsumer.ConsumeMetrics(ctx, md)
 }
 
@@ -145,7 +148,7 @@ func (dc *decorateConsumer) Shutdown() error {
 	}
 	return nil
 }
-func (dc *decorateConsumer) logMd(md pmetric.Metrics) {
+func (dc *decorateConsumer) logMd(md pmetric.Metrics, mdName string) {
 	var logMessage strings.Builder
 
 	logMessage.WriteString("\"METRICS_MD\" : {\n")
@@ -204,6 +207,26 @@ func neuronMetricsProcess(md pmetric.Metrics, modifier *MetricModifier) (pmetric
 			ils := ilms.At(j)
 			metrics := ils.Metrics()
 
+			newMetrics := pmetric.NewMetricSlice()
+			for k := 0; k < metrics.Len(); k++ {
+				m := metrics.At(k)
+				modifier.ModifyMetric(m).MoveAndAppendTo(newMetrics)
+			}
+			newMetrics.CopyTo(metrics)
+		}
+	}
+	return md, nil
+}
+
+func podCorrelationProcess(md pmetric.Metrics, modifier *MetricModifier) (pmetric.Metrics, error) {
+	rms := md.ResourceMetrics()
+	for i := 0; i < rms.Len(); i++ {
+		rs := rms.At(i)
+		ilms := rs.ScopeMetrics()
+		for j := 0; j < ilms.Len(); j++ {
+			ils := ilms.At(j)
+			metrics := ils.Metrics()
+
 			neuronHardwareInfo := pmetric.Metric{}
 			for k := 0; k < metrics.Len(); k++ {
 				m := metrics.At(k)
@@ -218,20 +241,9 @@ func neuronMetricsProcess(md pmetric.Metrics, modifier *MetricModifier) (pmetric
 
 			for k := 0; k < metrics.Len(); k++ {
 				m := metrics.At(k)
-				modifier.AddPodCorrelationAttributes(getMetricDatapoints(m), neuronCoresPerDevice) // need to change this
+				modifier.AddPodCorrelationAttributes(GetMetricDatapoints(m), neuronCoresPerDevice)
 			}
 		}
 	}
 	return md, nil
-}
-
-func getMetricDatapoints(m pmetric.Metric) pmetric.NumberDataPointSlice {
-	switch m.Type() {
-	case pmetric.MetricTypeGauge:
-		return m.Gauge().DataPoints()
-	case pmetric.MetricTypeSum:
-		return m.Sum().DataPoints()
-	default:
-		return pmetric.NewNumberDataPointSlice()
-	}
 }
