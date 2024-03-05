@@ -94,10 +94,10 @@ func (d *MetricModifier) ModifyMetric(originalMetric pmetric.Metric) pmetric.Met
 	metricDatapoints := GetMetricDatapoints(originalMetric)
 	slice := createAggregatatedSumMetrics(originalMetric, metricDatapoints)
 	slice.MoveAndAppendTo(newMetricSlice)
-	d.logSlice(slice, "intermediate slice")
+	d.logSlice(slice, "MetricModifier slice received after aggregation")
+	d.logSlice(&newMetricSlice, "MetricModifier new metric slice after merging aggregation slice")
 	finalSlice := duplicateMetrics(newMetricSlice, originalMetricName, metricDatapoints)
-	d.logSlice(&finalSlice, "final slice")
-
+	d.logSlice(&finalSlice, "MetricModifier final slice after duplication")
 	return finalSlice
 }
 
@@ -164,7 +164,7 @@ func duplicateMetrics(metricsSlice pmetric.MetricSlice, originalMetricName strin
 func duplicateMetricForType(metric pmetric.Metric, duplicateType string) *pmetric.Metric {
 	metricCopy := pmetric.NewMetric()
 	metric.CopyTo(metricCopy)
-	metricCopy.SetName(TypeNode + "_" + metricCopy.Name())
+	metricCopy.SetName(duplicateType + "_" + metricCopy.Name())
 
 	datapoints := GetMetricDatapoints(metricCopy)
 	for i := 0; i < datapoints.Len(); i++ {
