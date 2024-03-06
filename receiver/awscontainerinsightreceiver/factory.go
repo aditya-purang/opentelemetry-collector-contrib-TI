@@ -44,7 +44,7 @@ const (
 	defaultEnableControlPlaneMetrics = false
 
 	// Don't enable Neuron metrics by default
-	defaultEnableNeuronMetrics = false
+	defaultEnableAwsNeuronMetrics = false
 )
 
 // NewFactory creates a factory for AWS container insight receiver
@@ -67,7 +67,7 @@ func createDefaultConfig() component.Config {
 		ClusterName:                 defaultClusterName,
 		LeaderLockName:              defaultLeaderLockName,
 		EnableControlPlaneMetrics:   defaultEnableControlPlaneMetrics,
-		EnableNeuronMetric:          defaultEnableNeuronMetrics,
+		EnableAwsNeuronMetric:       defaultEnableAwsNeuronMetrics,
 	}
 }
 

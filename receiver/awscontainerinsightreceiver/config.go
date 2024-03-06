@@ -62,7 +62,7 @@ type Config struct {
 	EnableAcceleratedComputeMetrics bool `mapstructure:"accelerated_compute_metrics"`
 	EnableGpuMetric                 bool `mapstructure:"accelerated_compute_metrics"`
 
-	// EnableNeuronMetric toggles Neuron monitoring where metrics are scraped from neuron monitor
+	// EnableAwsNeuronMetric toggles Neuron monitoring where metrics are scraped from neuron monitor
 	// The default value is false.
-	EnableNeuronMetric bool `mapstructure:"neuron_metrics"`
+	EnableAwsNeuronMetric bool `mapstructure:"neuron_metrics"`
 }
