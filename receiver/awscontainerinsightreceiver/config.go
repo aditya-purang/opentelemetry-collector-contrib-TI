@@ -64,5 +64,5 @@ type Config struct {
 
 	// EnableAwsNeuronMetric toggles Neuron monitoring where metrics are scraped from neuron monitor
 	// The default value is false.
-	EnableAwsNeuronMetric bool `mapstructure:"aws_neuron_metrics"`
+	EnableAwsNeuronMetrics bool `mapstructure:"aws_neuron_metrics"`
 }
