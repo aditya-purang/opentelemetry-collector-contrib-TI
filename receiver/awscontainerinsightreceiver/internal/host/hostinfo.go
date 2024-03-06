@@ -22,6 +22,7 @@ type Info struct {
 	awsSession            *session.Session
 	refreshInterval       time.Duration
 	containerOrchestrator string
+	clusterName           string
 	instanceIDReadyC      chan bool // close of this channel indicates instance ID is ready
 	instanceIPReadyC      chan bool // close of this channel indicates instance Ip is ready
 
@@ -35,15 +36,21 @@ type Info struct {
 
 	awsSessionCreator   func(*zap.Logger, awsutil.ConnAttr, *awsutil.AWSSessionSettings) (*aws.Config, *session.Session, error)
 	nodeCapacityCreator func(*zap.Logger, ...nodeCapacityOption) (nodeCapacityProvider, error)
-	ec2MetadataCreator  func(context.Context, *session.Session, time.Duration, chan bool, chan bool, *zap.Logger, ...ec2MetadataOption) ec2MetadataProvider
+	ec2MetadataCreator  func(context.Context, *session.Session, time.Duration, chan bool, chan bool, bool, int, *zap.Logger, ...ec2MetadataOption) ec2MetadataProvider
 	ebsVolumeCreator    func(context.Context, *session.Session, string, string, time.Duration, *zap.Logger, ...ebsVolumeOption) ebsVolumeProvider
 	ec2TagsCreator      func(context.Context, *session.Session, string, string, string, time.Duration, *zap.Logger, ...ec2TagsOption) ec2TagsProvider
 }
 
-type machineInfoOption func(*Info)
+type Option func(*Info)
+
+func WithClusterName(name string) Option {
+	return func(info *Info) {
+		info.clusterName = name
+	}
+}
 
 // NewInfo creates a new Info struct
-func NewInfo(containerOrchestrator string, refreshInterval time.Duration, logger *zap.Logger, options ...machineInfoOption) (*Info, error) {
+func NewInfo(awsSessionSettings awsutil.AWSSessionSettings, containerOrchestrator string, refreshInterval time.Duration, logger *zap.Logger, options ...Option) (*Info, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	mInfo := &Info{
 		cancel:           cancel,
@@ -74,14 +81,13 @@ func NewInfo(containerOrchestrator string, refreshInterval time.Duration, logger
 	}
 	mInfo.nodeCapacity = nodeCapacity
 
-	defaultSessionConfig := awsutil.CreateDefaultSessionConfig()
-	_, session, err := mInfo.awsSessionCreator(logger, &awsutil.Conn{}, &defaultSessionConfig)
+	_, session, err := mInfo.awsSessionCreator(logger, &awsutil.Conn{}, &awsSessionSettings)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create aws session: %w", err)
 	}
 	mInfo.awsSession = session
 
-	mInfo.ec2Metadata = mInfo.ec2MetadataCreator(ctx, session, refreshInterval, mInfo.instanceIDReadyC, mInfo.instanceIPReadyC, logger)
+	mInfo.ec2Metadata = mInfo.ec2MetadataCreator(ctx, session, refreshInterval, mInfo.instanceIDReadyC, mInfo.instanceIPReadyC, awsSessionSettings.LocalMode, awsSessionSettings.IMDSRetries, logger)
 
 	go mInfo.lazyInitEBSVolume(ctx)
 	go mInfo.lazyInitEC2Tags(ctx)
@@ -145,6 +151,9 @@ func (m *Info) GetEBSVolumeID(devName string) string {
 
 // GetClusterName returns the cluster name associated with the host
 func (m *Info) GetClusterName() string {
+	if m.clusterName != "" {
+		return m.clusterName
+	}
 	if m.ec2Tags != nil {
 		return m.ec2Tags.getClusterName()
 	}

@@ -19,7 +19,7 @@ type mockMetadataClient struct {
 	count int
 }
 
-func (m *mockMetadataClient) GetInstanceIdentityDocumentWithContext(_ context.Context) (awsec2metadata.EC2InstanceIdentityDocument, error) {
+func (m *mockMetadataClient) GetInstanceIdentityDocument() (awsec2metadata.EC2InstanceIdentityDocument, error) {
 	m.count++
 	if m.count == 1 {
 		return awsec2metadata.EC2InstanceIdentityDocument{}, errors.New("error")
@@ -40,8 +40,9 @@ func TestEC2Metadata(t *testing.T) {
 	instanceIPReadyP := make(chan bool)
 	clientOption := func(e *ec2Metadata) {
 		e.client = &mockMetadataClient{}
+		e.clientFallbackEnable = &mockMetadataClient{}
 	}
-	e := newEC2Metadata(ctx, sess, 3*time.Millisecond, instanceIDReadyC, instanceIPReadyP, zap.NewNop(), clientOption)
+	e := newEC2Metadata(ctx, sess, 3*time.Millisecond, instanceIDReadyC, instanceIPReadyP, false, 0, zap.NewNop(), clientOption)
 	assert.NotNil(t, e)
 
 	<-instanceIDReadyC

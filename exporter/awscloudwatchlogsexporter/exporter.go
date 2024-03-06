@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/amazon-contributing/opentelemetry-collector-contrib/extension/awsmiddleware"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/cloudwatchlogs"
 	"github.com/google/uuid"
@@ -52,8 +53,6 @@ func newCwLogsPusher(expConfig *Config, params exp.CreateSettings) (*cwlExporter
 		return nil, errors.New("awscloudwatchlogs exporter config is nil")
 	}
 
-	expConfig.logger = params.Logger
-
 	// create AWS session
 	awsConfig, session, err := awsutil.GetAWSConfigSession(params.Logger, &awsutil.Conn{}, &expConfig.AWSSessionSettings)
 	if err != nil {
@@ -63,7 +62,6 @@ func newCwLogsPusher(expConfig *Config, params exp.CreateSettings) (*cwlExporter
 	// create CWLogs client with aws session config
 	svcStructuredLog := cwlogs.NewClient(params.Logger, awsConfig, params.BuildInfo, expConfig.LogGroupName, expConfig.LogRetention, expConfig.Tags, session, metadata.Type.String())
 	collectorIdentifier, err := uuid.NewRandom()
-
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +94,7 @@ func newCwLogsExporter(config component.Config, params exp.CreateSettings) (exp.
 		exporterhelper.WithQueue(expConfig.QueueSettings),
 		exporterhelper.WithRetry(expConfig.BackOffConfig),
 		exporterhelper.WithCapabilities(consumer.Capabilities{MutatesData: false}),
+		exporterhelper.WithStart(logsPusher.start),
 		exporterhelper.WithShutdown(logsPusher.shutdown),
 	)
 }
@@ -117,6 +116,13 @@ func (e *cwlExporter) consumeLogs(_ context.Context, ld plog.Logs) error {
 	}
 
 	return errs
+}
+
+func (e *cwlExporter) start(_ context.Context, host component.Host) error {
+	if e.Config.MiddlewareID != nil {
+		awsmiddleware.TryConfigure(e.logger, host, *e.Config.MiddlewareID, awsmiddleware.SDKv1(e.svcStructuredLog.Handlers()))
+	}
+	return nil
 }
 
 func (e *cwlExporter) shutdown(_ context.Context) error {
@@ -192,17 +198,21 @@ func logToCWLog(resourceAttrs map[string]any, scope pcommon.InstrumentationScope
 		var metadata emfMetadata
 		bodyString := log.Body().AsString()
 		err = json.Unmarshal([]byte(bodyString), &metadata)
+		switch {
 		// v1 emf json
-		if err == nil && metadata.AWSMetadata != nil && metadata.AWSMetadata.LogGroupName != "" {
+		case err == nil && metadata.AWSMetadata != nil && metadata.AWSMetadata.LogGroupName != "":
 			logGroupName = metadata.AWSMetadata.LogGroupName
 			if metadata.AWSMetadata.LogStreamName != "" {
 				logStreamName = metadata.AWSMetadata.LogStreamName
 			}
-		} else /* v0 emf json */ if err == nil && metadata.LogGroupName != "" {
+		// v0 emf json
+		case err == nil && metadata.LogGroupName != "":
 			logGroupName = metadata.LogGroupName
 			if metadata.LogStreamName != "" {
 				logStreamName = metadata.LogStreamName
 			}
+		case config.EmfOnly:
+			return &cwlogs.Event{}, errors.New("invalid emf log")
 		}
 		bodyJSON = []byte(bodyString)
 	} else {

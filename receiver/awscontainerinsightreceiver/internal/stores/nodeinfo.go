@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"go.uber.org/zap"
+	v1 "k8s.io/api/core/v1"
 )
 
 type nodeStats struct {
@@ -18,6 +19,9 @@ type nodeStats struct {
 }
 
 type nodeInfo struct {
+	nodeName string
+	provider nodeInfoProvider
+
 	statsLock sync.RWMutex
 	nodeStats nodeStats
 
@@ -30,9 +34,17 @@ type nodeInfo struct {
 	logger *zap.Logger
 }
 
-func newNodeInfo(logger *zap.Logger) *nodeInfo {
+type nodeInfoProvider interface {
+	NodeToCapacityMap() map[string]v1.ResourceList
+	NodeToAllocatableMap() map[string]v1.ResourceList
+	NodeToConditionsMap() map[string]map[v1.NodeConditionType]v1.ConditionStatus
+}
+
+func newNodeInfo(nodeName string, provider nodeInfoProvider, logger *zap.Logger) *nodeInfo {
 	nc := &nodeInfo{
-		logger: logger,
+		nodeName: nodeName,
+		provider: provider,
+		logger:   logger,
 	}
 	return nc
 }
@@ -71,6 +83,48 @@ func (n *nodeInfo) getNodeStats() nodeStats {
 	n.statsLock.RLock()
 	defer n.statsLock.RUnlock()
 	return n.nodeStats
+}
+
+func (n *nodeInfo) getNodeStatusCapacityPods() (uint64, bool) {
+	capacityResources, ok := n.provider.NodeToCapacityMap()[n.nodeName]
+	if !ok {
+		return 0, false
+	}
+	pods, _ := capacityResources.Pods().AsInt64()
+	return forceConvertToInt64(pods, n.logger), true
+}
+
+func (n *nodeInfo) getNodeStatusAllocatablePods() (uint64, bool) {
+	allocatableResources, ok := n.provider.NodeToAllocatableMap()[n.nodeName]
+	if !ok {
+		return 0, false
+	}
+	pods, _ := allocatableResources.Pods().AsInt64()
+	return forceConvertToInt64(pods, n.logger), true
+}
+
+func (n *nodeInfo) getNodeStatusCondition(conditionType v1.NodeConditionType) (uint64, bool) {
+	if nodeConditions, ok := n.provider.NodeToConditionsMap()[n.nodeName]; ok {
+		if conditionStatus, ok := nodeConditions[conditionType]; ok {
+			if conditionStatus == v1.ConditionTrue {
+				return 1, true
+			}
+			return 0, true // v1.ConditionFalse or v1.ConditionUnknown
+		}
+	}
+	return 0, false
+}
+
+func (n *nodeInfo) getNodeConditionUnknown() (uint64, bool) {
+	if nodeConditions, ok := n.provider.NodeToConditionsMap()[n.nodeName]; ok {
+		for _, conditionStatus := range nodeConditions {
+			if conditionStatus == v1.ConditionUnknown {
+				return 1, true
+			}
+		}
+		return 0, true
+	}
+	return 0, false
 }
 
 func forceConvertToInt64(v any, logger *zap.Logger) uint64 {

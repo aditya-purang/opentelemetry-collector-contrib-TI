@@ -26,6 +26,14 @@ type AWSSessionSettings struct {
 	ResourceARN string `mapstructure:"resource_arn"`
 	// IAM role to upload segments to a different account.
 	RoleARN string `mapstructure:"role_arn"`
+	// Change the default profile for shared creds file
+	Profile string `mapstructure:"profile"`
+	// Change the default shared creds file location
+	SharedCredentialsFile []string `mapstructure:"shared_credentials_file"`
+	// Add a custom certificates file
+	CertificateFilePath string `mapstructure:"certificate_file_path"`
+	// How many times should we retry imds v2
+	IMDSRetries int `mapstructure:"imds_retries"`
 }
 
 func CreateDefaultSessionConfig() AWSSessionSettings {

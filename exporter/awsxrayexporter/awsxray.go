@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/amazon-contributing/opentelemetry-collector-contrib/extension/awsmiddleware"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/xray"
 	"go.opentelemetry.io/collector/component"
@@ -84,8 +85,11 @@ func newTracesExporter(
 			}
 			return err
 		},
-		exporterhelper.WithStart(func(context.Context, component.Host) error {
+		exporterhelper.WithStart(func(_ context.Context, host component.Host) error {
 			sender.Start()
+			if cfg.MiddlewareID != nil {
+				awsmiddleware.TryConfigure(logger, host, *cfg.MiddlewareID, awsmiddleware.SDKv1(xrayClient.Handlers()))
+			}
 			return nil
 		}),
 		exporterhelper.WithShutdown(func(context.Context) error {
@@ -105,17 +109,21 @@ func extractResourceSpans(config component.Config, logger *zap.Logger, td ptrace
 		for j := 0; j < rspans.ScopeSpans().Len(); j++ {
 			spans := rspans.ScopeSpans().At(j).Spans()
 			for k := 0; k < spans.Len(); k++ {
-				document, localErr := translator.MakeSegmentDocumentString(
+				documentsForSpan, localErr := translator.MakeSegmentDocuments(
 					spans.At(k), resource,
 					config.(*Config).IndexedAttributes,
 					config.(*Config).IndexAllAttributes,
 					config.(*Config).LogGroupNames,
 					config.(*Config).skipTimestampValidation)
+
 				if localErr != nil {
 					logger.Debug("Error translating span.", zap.Error(localErr))
 					continue
 				}
-				documents = append(documents, &document)
+
+				for l := range documentsForSpan {
+					documents = append(documents, &documentsForSpan[l])
+				}
 			}
 		}
 	}

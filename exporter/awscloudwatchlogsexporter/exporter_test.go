@@ -6,20 +6,28 @@ package awscloudwatchlogsexporter
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
+	"github.com/amazon-contributing/opentelemetry-collector-contrib/extension/awsmiddleware"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/cloudwatchlogs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/exporter/exportertest"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/cwlogs"
 )
+
+func init() {
+	os.Setenv("AWS_ACCESS_KEY_ID", "test")
+	os.Setenv("AWS_SECRET_ACCESS_KEY", "test")
+}
 
 type mockPusher struct {
 	mock.Mock
@@ -238,6 +246,52 @@ func TestLogToCWLog(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:     "invalid emf log",
+			resource: testResource(),
+			log:      createPLog(`1000{"Timestamp":1574109732004,"log_group_name":"Foo","log_stream_name":"Foo","CloudWatchMetrics":[{"Namespace":"MyApp","Dimensions":[["Operation"]],"Metrics":[{"Name":"ProcessingLatency","Unit":"Milliseconds","StorageResolution":60}]}],"Operation":"Aggregator","ProcessingLatency":100}`),
+			config: &Config{
+				LogGroupName:  "tLogGroup",
+				LogStreamName: "tStreamName",
+				RawLog:        true,
+				EmfOnly:       true,
+			},
+			wantErr: true,
+		},
+		{
+			name:     "invalid emf log no log group",
+			resource: testResource(),
+			log:      createPLog(`{"Timestamp":1574109732004,"log_stream_name":"Foo","CloudWatchMetrics":[{"Namespace":"MyApp","Dimensions":[["Operation"]],"Metrics":[{"Name":"ProcessingLatency","Unit":"Milliseconds","StorageResolution":60}]}],"Operation":"Aggregator","ProcessingLatency":100}`),
+			config: &Config{
+				LogGroupName:  "tLogGroup",
+				LogStreamName: "tStreamName",
+				RawLog:        true,
+				EmfOnly:       true,
+			},
+			wantErr: true,
+		},
+		{
+			name:     "raw emf v0 emf only true",
+			resource: testResource(),
+			log:      createPLog(`{"Timestamp":1574109732004,"log_group_name":"Foo","CloudWatchMetrics":[{"Namespace":"MyApp","Dimensions":[["Operation"]],"Metrics":[{"Name":"ProcessingLatency","Unit":"Milliseconds","StorageResolution":60}]}],"Operation":"Aggregator","ProcessingLatency":100}`),
+			config: &Config{
+				LogGroupName:  "tLogGroup",
+				LogStreamName: "tStreamName",
+				RawLog:        true,
+				EmfOnly:       true,
+			},
+			want: cwlogs.Event{
+				GeneratedTime: time.Now(),
+				InputLogEvent: &cloudwatchlogs.InputLogEvent{
+					Timestamp: aws.Int64(1609719139),
+					Message:   aws.String(`{"Timestamp":1574109732004,"log_group_name":"Foo","CloudWatchMetrics":[{"Namespace":"MyApp","Dimensions":[["Operation"]],"Metrics":[{"Name":"ProcessingLatency","Unit":"Milliseconds","StorageResolution":60}]}],"Operation":"Aggregator","ProcessingLatency":100}`),
+				},
+				StreamKey: cwlogs.StreamKey{
+					LogGroupName:  "Foo",
+					LogStreamName: "tStreamName",
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -411,6 +465,43 @@ func TestConsumeLogs(t *testing.T) {
 			logPusher.AssertNumberOfCalls(t, "AddLogEntry", 3)
 		})
 	}
+}
+
+func TestMiddleware(t *testing.T) {
+	id := component.NewID("test")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	factory := NewFactory()
+	expCfg := factory.CreateDefaultConfig().(*Config)
+	expCfg.Region = "us-west-2"
+	expCfg.LogGroupName = "testGroup"
+	expCfg.LogStreamName = "testStream"
+	expCfg.MaxRetries = 0
+	expCfg.MiddlewareID = &id
+	handler := new(awsmiddleware.MockHandler)
+	handler.On("ID").Return("test")
+	handler.On("Position").Return(awsmiddleware.After)
+	handler.On("HandleRequest", mock.Anything, mock.Anything)
+	handler.On("HandleResponse", mock.Anything, mock.Anything)
+	middleware := new(awsmiddleware.MockMiddlewareExtension)
+	middleware.On("Handlers").Return([]awsmiddleware.RequestHandler{handler}, []awsmiddleware.ResponseHandler{handler})
+	extensions := map[component.ID]component.Component{id: middleware}
+	exp, err := newCwLogsPusher(expCfg, exportertest.NewNopCreateSettings())
+	assert.Nil(t, err)
+	assert.NotNil(t, exp)
+	host := new(awsmiddleware.MockExtensionsHost)
+	host.On("GetExtensions").Return(extensions)
+	assert.NoError(t, exp.start(ctx, host))
+	ld := plog.NewLogs()
+	r := ld.ResourceLogs().AppendEmpty()
+	r.Resource().Attributes().PutStr("hello", "test")
+	logRecords := r.ScopeLogs().AppendEmpty().LogRecords()
+	logRecords.EnsureCapacity(5)
+	logRecords.AppendEmpty()
+	require.Error(t, exp.consumeLogs(ctx, ld))
+	require.NoError(t, exp.shutdown(ctx))
+	handler.AssertCalled(t, "HandleRequest", mock.Anything, mock.Anything)
+	handler.AssertCalled(t, "HandleResponse", mock.Anything, mock.Anything)
 }
 
 func TestNewExporterWithoutRegionErr(t *testing.T) {

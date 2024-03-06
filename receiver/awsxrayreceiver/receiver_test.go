@@ -33,9 +33,9 @@ import (
 )
 
 const (
-	segmentHeader        = "{\"format\": \"json\", \"version\": 1}\n"
-	defaultRegionEnvName = "AWS_DEFAULT_REGION"
-	mockRegion           = "us-west-2"
+	segmentHeader = "{\"format\": \"json\", \"version\": 1}\n"
+	regionEnvName = "AWS_REGION"
+	mockRegion    = "us-west-2"
 )
 
 func TestProxyCreationFailed(t *testing.T) {
@@ -91,7 +91,7 @@ func TestSegmentsPassedToConsumer(t *testing.T) {
 		assert.NoError(t, tt.Shutdown(context.Background()))
 	}()
 
-	t.Setenv(defaultRegionEnvName, mockRegion)
+	t.Setenv(regionEnvName, mockRegion)
 
 	addr, rcvr, _ := createAndOptionallyStartReceiver(t, nil, true, receiver.CreateSettings{ID: receiverID, TelemetrySettings: tt.TelemetrySettings(), BuildInfo: component.NewDefaultBuildInfo()})
 	defer func() {
@@ -122,7 +122,7 @@ func TestTranslatorErrorsOut(t *testing.T) {
 		assert.NoError(t, tt.Shutdown(context.Background()))
 	}()
 
-	t.Setenv(defaultRegionEnvName, mockRegion)
+	t.Setenv(regionEnvName, mockRegion)
 
 	addr, rcvr, recordedLogs := createAndOptionallyStartReceiver(t, nil, true, receiver.CreateSettings{ID: receiverID, TelemetrySettings: tt.TelemetrySettings(), BuildInfo: component.NewDefaultBuildInfo()})
 	defer func() {
@@ -149,7 +149,7 @@ func TestSegmentsConsumerErrorsOut(t *testing.T) {
 		assert.NoError(t, tt.Shutdown(context.Background()))
 	}()
 
-	t.Setenv(defaultRegionEnvName, mockRegion)
+	t.Setenv(regionEnvName, mockRegion)
 
 	addr, rcvr, recordedLogs := createAndOptionallyStartReceiver(t, consumertest.NewErr(errors.New("can't consume traces")), true, receiver.CreateSettings{ID: receiverID, TelemetrySettings: tt.TelemetrySettings(), BuildInfo: component.NewDefaultBuildInfo()})
 	defer func() {
@@ -179,7 +179,7 @@ func TestPollerCloseError(t *testing.T) {
 		assert.NoError(t, tt.Shutdown(context.Background()))
 	}()
 
-	t.Setenv(defaultRegionEnvName, mockRegion)
+	t.Setenv(regionEnvName, mockRegion)
 
 	_, rcvr, _ := createAndOptionallyStartReceiver(t, nil, false, receiver.CreateSettings{ID: receiverID, TelemetrySettings: tt.TelemetrySettings(), BuildInfo: component.NewDefaultBuildInfo()})
 	mPoller := &mockPoller{closeErr: errors.New("mockPollerCloseErr")}
@@ -197,7 +197,7 @@ func TestProxyCloseError(t *testing.T) {
 		assert.NoError(t, tt.Shutdown(context.Background()))
 	}()
 
-	t.Setenv(defaultRegionEnvName, mockRegion)
+	t.Setenv(regionEnvName, mockRegion)
 
 	_, rcvr, _ := createAndOptionallyStartReceiver(t, nil, false, receiver.CreateSettings{ID: receiverID, TelemetrySettings: tt.TelemetrySettings(), BuildInfo: component.NewDefaultBuildInfo()})
 	mProxy := &mockProxy{closeErr: errors.New("mockProxyCloseErr")}
@@ -215,7 +215,7 @@ func TestBothPollerAndProxyCloseError(t *testing.T) {
 		assert.NoError(t, tt.Shutdown(context.Background()))
 	}()
 
-	t.Setenv(defaultRegionEnvName, mockRegion)
+	t.Setenv(regionEnvName, mockRegion)
 
 	_, rcvr, _ := createAndOptionallyStartReceiver(t, nil, false, receiver.CreateSettings{ID: receiverID, TelemetrySettings: tt.TelemetrySettings(), BuildInfo: component.NewDefaultBuildInfo()})
 	mPoller := &mockPoller{closeErr: errors.New("mockPollerCloseErr")}

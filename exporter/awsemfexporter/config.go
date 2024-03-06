@@ -4,6 +4,8 @@
 package awsemfexporter // import "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/awsemfexporter"
 
 import (
+	"strings"
+
 	"go.opentelemetry.io/collector/component"
 	"go.uber.org/zap"
 
@@ -50,7 +52,7 @@ type Config struct {
 	// Tags is the option to set tags for the CloudWatch Log Group.  If specified, please add at most 50 tags.  Input is a string to string map like so: { 'key': 'value' }
 	// Keys must be between 1-128 characters and follow the regex pattern: ^([\p{L}\p{Z}\p{N}_.:/=+\-@]+)$
 	// Values must be between 1-256 characters and follow the regex pattern: ^([\p{L}\p{Z}\p{N}_.:/=+\-@]*)$
-	Tags map[string]*string `mapstructure:"tags"`
+	Tags map[string]*string `mapstructure:"tags,omitempty"`
 
 	// ParseJSONEncodedAttributeValues is an array of attribute keys whose corresponding values are JSON-encoded as strings.
 	// Those strings will be decoded to its original json structure.
@@ -68,10 +70,18 @@ type Config struct {
 	// TODO: we can support directing output to a file (in the future) while customer specifies a file path here.
 	OutputDestination string `mapstructure:"output_destination"`
 
-	// EKSFargateContainerInsightsEnabled is an option to reformat certin metric labels so that they take the form of a high level object
+	// EKSFargateContainerInsightsEnabled is an option to reformat certain metric labels so that they take the form of a high level object
 	// The end result will make the labels look like those coming out of ECS and be more easily injected into cloudwatch
 	// Note that at the moment in order to use this feature the value "kubernetes" must also be added to the ParseJSONEncodedAttributeValues array in order to be used
 	EKSFargateContainerInsightsEnabled bool `mapstructure:"eks_fargate_container_insights_enabled"`
+
+	// EnhancedContainerInsights indicates payloads will include enhanced container insights metrics
+	EnhancedContainerInsights bool `mapstructure:"enhanced_container_insights"`
+
+	// DisableMetricExtraction is an option to disable the extraction of metrics from the EMF logs.
+	// Setting this to true essentially skips generating and setting the _aws / CloudWatchMetrics section of the EMF log, thus effectively
+	// retaining all the fields / labels in the EMF log except for the section responsible for extraction of metrics.
+	DisableMetricExtraction bool `mapstructure:"disable_metric_extraction"`
 
 	// ResourceToTelemetrySettings is an option for converting resource attrihutes to telemetry attributes.
 	// "Enabled" - A boolean field to enable/disable this option. Default is `false`.
@@ -86,6 +96,9 @@ type Config struct {
 	// https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch_Embedded_Metric_Format_Specification.html#CloudWatch_Embedded_Metric_Format_Specification_structure
 	// Otherwise, sending metrics as Embedded Metric Format version 0 (without "_aws")
 	Version string `mapstructure:"version"`
+
+	// MiddlewareID is an ID for an extension that can be used to configure the AWS client.
+	MiddlewareID *component.ID `mapstructure:"middleware,omitempty"`
 
 	// logger is the Logger used for writing error/warning logs
 	logger *zap.Logger
@@ -134,7 +147,22 @@ func (config *Config) Validate() error {
 	}
 
 	return cwlogs.ValidateTagsInput(config.Tags)
+}
 
+func (config *Config) IsEnhancedContainerInsights() bool {
+	return config.EnhancedContainerInsights && !config.DisableMetricExtraction
+}
+
+func (config *Config) IsAppSignalsEnabled() bool {
+	if config.LogGroupName == "" || config.Namespace == "" {
+		return false
+	}
+
+	if config.Namespace == appSignalsMetricNamespace && strings.HasPrefix(config.LogGroupName, appSignalsLogGroupNamePrefix) {
+		return true
+	}
+
+	return false
 }
 
 func newEMFSupportedUnits() map[string]any {

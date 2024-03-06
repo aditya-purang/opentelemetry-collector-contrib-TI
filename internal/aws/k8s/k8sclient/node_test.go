@@ -4,13 +4,14 @@
 package k8sclient
 
 import (
-	"log"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -42,6 +43,12 @@ var nodeArray = []any{
 			},
 		},
 		Status: v1.NodeStatus{
+			Capacity: v1.ResourceList{
+				v1.ResourcePods: *resource.NewQuantity(5, resource.DecimalSI),
+			},
+			Allocatable: v1.ResourceList{
+				v1.ResourcePods: *resource.NewQuantity(5, resource.DecimalSI),
+			},
 			Conditions: []v1.NodeCondition{
 				{
 					Type:   "MemoryPressure",
@@ -132,6 +139,12 @@ var nodeArray = []any{
 			},
 		},
 		Status: v1.NodeStatus{
+			Capacity: v1.ResourceList{
+				v1.ResourcePods: *resource.NewQuantity(10, resource.DecimalSI),
+			},
+			Allocatable: v1.ResourceList{
+				v1.ResourcePods: *resource.NewQuantity(10, resource.DecimalSI),
+			},
 			Conditions: []v1.NodeCondition{
 				{
 					Type:   "MemoryPressure",
@@ -222,6 +235,12 @@ var nodeArray = []any{
 			},
 		},
 		Status: v1.NodeStatus{
+			Capacity: v1.ResourceList{
+				v1.ResourcePods: *resource.NewQuantity(5, resource.DecimalSI),
+			},
+			Allocatable: v1.ResourceList{
+				v1.ResourcePods: *resource.NewQuantity(1, resource.DecimalSI),
+			},
 			Conditions: []v1.NodeCondition{
 				{
 					Type:   "MemoryPressure",
@@ -261,7 +280,7 @@ var nodeArray = []any{
 				},
 				{
 					Type:   "Ready",
-					Status: "True",
+					Status: "False",
 					LastHeartbeatTime: metav1.Time{
 						Time: time.Now(),
 					},
@@ -269,7 +288,7 @@ var nodeArray = []any{
 						Time: time.Now(),
 					},
 					Reason:  "KubeletReady",
-					Message: "kubelet is posting ready status",
+					Message: "kubelet is not posting ready status",
 				},
 			},
 			NodeInfo: v1.NodeSystemInfo{
@@ -289,23 +308,91 @@ var nodeArray = []any{
 }
 
 func TestNodeClient(t *testing.T) {
-	t.Skip("Flaky test, see https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/9001")
-	setOption := nodeSyncCheckerOption(&mockReflectorSyncChecker{})
+	testCases := map[string]struct {
+		options []nodeClientOption
+		want    map[string]any
+	}{
+		"Default": {
+			options: []nodeClientOption{
+				nodeSyncCheckerOption(&mockReflectorSyncChecker{}),
+			},
+			want: map[string]any{
+				"clusterNodeCount":       3,
+				"clusterFailedNodeCount": 1,
+				"nodeToCapacityMap":      map[string]v1.ResourceList{},                             // Node level info is not captured by default
+				"nodeToAllocatableMap":   map[string]v1.ResourceList{},                             // Node level info is not captured by default
+				"nodeToConditionsMap":    map[string]map[v1.NodeConditionType]v1.ConditionStatus{}, // Node level info is not captured by default
+			},
+		},
+		"CaptureNodeLevelInfo": {
+			options: []nodeClientOption{
+				nodeSyncCheckerOption(&mockReflectorSyncChecker{}),
+				captureNodeLevelInfoOption(true),
+			},
+			want: map[string]any{
+				"clusterNodeCount":       3,
+				"clusterFailedNodeCount": 1,
+				"nodeToCapacityMap": map[string]v1.ResourceList{
+					"ip-192-168-200-63.eu-west-1.compute.internal": {
+						"pods": *resource.NewQuantity(5, resource.DecimalSI),
+					},
+					"ip-192-168-76-61.eu-west-1.compute.internal": {
+						"pods": *resource.NewQuantity(10, resource.DecimalSI),
+					},
+					"ip-192-168-153-1.eu-west-1.compute.internal": {
+						"pods": *resource.NewQuantity(5, resource.DecimalSI),
+					},
+				},
+				"nodeToAllocatableMap": map[string]v1.ResourceList{
+					"ip-192-168-200-63.eu-west-1.compute.internal": {
+						"pods": *resource.NewQuantity(5, resource.DecimalSI),
+					},
+					"ip-192-168-76-61.eu-west-1.compute.internal": {
+						"pods": *resource.NewQuantity(10, resource.DecimalSI),
+					},
+					"ip-192-168-153-1.eu-west-1.compute.internal": {
+						"pods": *resource.NewQuantity(1, resource.DecimalSI),
+					},
+				},
+				"nodeToConditionsMap": map[string]map[v1.NodeConditionType]v1.ConditionStatus{
+					"ip-192-168-200-63.eu-west-1.compute.internal": {
+						"DiskPressure":   "False",
+						"MemoryPressure": "False",
+						"PIDPressure":    "False",
+						"Ready":          "True",
+					},
+					"ip-192-168-76-61.eu-west-1.compute.internal": {
+						"DiskPressure":   "False",
+						"MemoryPressure": "False",
+						"PIDPressure":    "False",
+						"Ready":          "True",
+					},
+					"ip-192-168-153-1.eu-west-1.compute.internal": {
+						"DiskPressure":   "True",
+						"MemoryPressure": "False",
+						"PIDPressure":    "False",
+						"Ready":          "False",
+					},
+				},
+			},
+		},
+	}
+	for name, testCase := range testCases {
+		t.Run(name, func(t *testing.T) {
+			fakeClientSet := fake.NewSimpleClientset()
+			client := newNodeClient(fakeClientSet, zap.NewNop(), testCase.options...)
+			assert.NoError(t, client.store.Replace(nodeArray, ""))
 
-	fakeClientSet := fake.NewSimpleClientset()
-	client := newNodeClient(fakeClientSet, zap.NewNop(), setOption)
-	assert.NoError(t, client.store.Replace(nodeArray, ""))
+			require.Equal(t, testCase.want["clusterNodeCount"], client.ClusterNodeCount())
+			require.Equal(t, testCase.want["clusterFailedNodeCount"], client.ClusterFailedNodeCount())
+			require.Equal(t, testCase.want["nodeToCapacityMap"], client.NodeToCapacityMap())
+			require.Equal(t, testCase.want["nodeToAllocatableMap"], client.NodeToAllocatableMap())
+			require.Equal(t, testCase.want["nodeToConditionsMap"], client.NodeToConditionsMap())
 
-	expectedClusterNodeCount := 3
-	expectedClusterFailedNodeCount := 1
-	clusterNodeCount := client.ClusterNodeCount()
-	clusterFailedNodeCount := client.ClusterFailedNodeCount()
-	log.Printf("clusterNodeCount: %v, clusterFailedNodeCount: %v", clusterNodeCount, clusterFailedNodeCount)
-
-	assert.Equal(t, clusterNodeCount, expectedClusterNodeCount)
-	assert.Equal(t, clusterFailedNodeCount, expectedClusterFailedNodeCount)
-	client.shutdown()
-	assert.True(t, client.stopped)
+			client.shutdown()
+			assert.True(t, client.stopped)
+		})
+	}
 }
 
 func TestTransformFuncNode(t *testing.T) {

@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	override "github.com/amazon-contributing/opentelemetry-collector-contrib/override/aws"
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/ec2metadata"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/xray"
@@ -150,16 +152,19 @@ func (p envMetadataProvider) get() string {
 }
 
 type ec2MetadataProvider struct {
-	client      *ec2metadata.EC2Metadata
-	metadataKey string
+	client               *ec2metadata.EC2Metadata
+	clientFallbackEnable *ec2metadata.EC2Metadata
+	metadataKey          string
 }
 
 func (p ec2MetadataProvider) get() string {
-	var metadata string
 	if result, err := p.client.GetMetadata(p.metadataKey); err == nil {
-		metadata = result
+		return result
 	}
-	return metadata
+	if result, err := p.clientFallbackEnable.GetMetadata(p.metadataKey); err == nil {
+		return result
+	}
+	return ""
 }
 
 // ToOptions returns the metadata options if enabled by the config.
@@ -167,18 +172,34 @@ func ToOptions(cfg Config, sess *session.Session, settings *awsutil.AWSSessionSe
 	if !cfg.IncludeMetadata {
 		return nil
 	}
-	metadataClient := ec2metadata.New(sess)
+	hostnameProviders := []metadataProvider{
+		simpleMetadataProvider{metadata: cfg.Hostname},
+		envMetadataProvider{envKey: envAWSHostname},
+	}
+	instanceIDProviders := []metadataProvider{
+		simpleMetadataProvider{metadata: cfg.InstanceID},
+		envMetadataProvider{envKey: envAWSInstanceID},
+	}
+	if !settings.LocalMode {
+		metadataClient := ec2metadata.New(sess, &aws.Config{
+			Retryer:                   override.NewIMDSRetryer(settings.IMDSRetries),
+			EC2MetadataEnableFallback: aws.Bool(false),
+		})
+		metadataClientFallbackEnable := ec2metadata.New(sess, &aws.Config{})
+		hostnameProviders = append(hostnameProviders, ec2MetadataProvider{
+			client:               metadataClient,
+			clientFallbackEnable: metadataClientFallbackEnable,
+			metadataKey:          metadataHostname,
+		})
+		instanceIDProviders = append(instanceIDProviders, ec2MetadataProvider{
+			client:               metadataClient,
+			clientFallbackEnable: metadataClientFallbackEnable,
+			metadataKey:          metadataHostname,
+		})
+	}
 	return []Option{
-		WithHostname(getMetadata(
-			simpleMetadataProvider{metadata: cfg.Hostname},
-			envMetadataProvider{envKey: envAWSHostname},
-			ec2MetadataProvider{client: metadataClient, metadataKey: metadataHostname},
-		)),
-		WithInstanceID(getMetadata(
-			simpleMetadataProvider{metadata: cfg.InstanceID},
-			envMetadataProvider{envKey: envAWSInstanceID},
-			ec2MetadataProvider{client: metadataClient, metadataKey: metadataInstanceID},
-		)),
+		WithHostname(getMetadata(hostnameProviders...)),
+		WithInstanceID(getMetadata(instanceIDProviders...)),
 		WithResourceARN(getMetadata(
 			simpleMetadataProvider{metadata: cfg.ResourceARN},
 			simpleMetadataProvider{metadata: settings.ResourceARN},

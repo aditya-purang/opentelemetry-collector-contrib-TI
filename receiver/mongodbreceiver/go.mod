@@ -127,3 +127,6 @@ retract (
 replace github.com/docker/docker v24.0.4+incompatible => github.com/docker/docker v24.0.5-0.20230719162248-f022632503d1+incompatible
 
 replace github.com/open-telemetry/opentelemetry-collector-contrib/pkg/golden => ../../pkg/golden
+
+// see https://github.com/mongodb/mongo-go-driver/pull/1485 (v1.13.0 was retracted)
+replace go.mongodb.org/mongo-driver => go.mongodb.org/mongo-driver v1.12.1

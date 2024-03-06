@@ -235,3 +235,62 @@ func TestValidateTags(t *testing.T) {
 		})
 	}
 }
+
+func TestRawLogEmfOnlyCombination(t *testing.T) {
+	tests := []struct {
+		RawLog    bool
+		EmfOnly   bool
+		Test      string
+		wantError bool
+	}{
+		{
+			RawLog:    true,
+			EmfOnly:   true,
+			wantError: false,
+			Test:      "Valid Combination Raw Log True Emf Only True",
+		},
+		{
+			RawLog:    true,
+			EmfOnly:   false,
+			wantError: false,
+			Test:      "Valid Combination Raw Log True Emf Only false",
+		},
+		{
+			RawLog:    false,
+			EmfOnly:   false,
+			wantError: false,
+			Test:      "Valid Combination Raw Log false Emf Only false",
+		},
+		{
+			RawLog:    false,
+			EmfOnly:   true,
+			wantError: true,
+			Test:      "Invalid Combination Raw Log false Emf Only true",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.Test, func(t *testing.T) {
+			defaultRetrySettings := exporterhelper.NewDefaultRetrySettings()
+			cfg := &Config{
+				RetrySettings:      defaultRetrySettings,
+				LogGroupName:       "test-1",
+				LogStreamName:      "testing",
+				Endpoint:           "",
+				LogRetention:       365,
+				AWSSessionSettings: awsutil.CreateDefaultSessionConfig(),
+				QueueSettings: exporterhelper.QueueSettings{
+					Enabled:      true,
+					NumConsumers: 1,
+					QueueSize:    exporterhelper.NewDefaultQueueSettings().QueueSize,
+				},
+				RawLog:  tt.RawLog,
+				EmfOnly: tt.EmfOnly,
+			}
+			if tt.wantError {
+				assert.Error(t, component.ValidateConfig(cfg))
+			} else {
+				assert.NoError(t, component.ValidateConfig(cfg))
+			}
+		})
+	}
+}

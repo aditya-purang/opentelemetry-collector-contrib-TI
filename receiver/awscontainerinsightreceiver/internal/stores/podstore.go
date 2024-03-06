@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/fields"
 
 	ci "github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/containerinsight"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/k8s/k8sclient"
@@ -34,6 +36,20 @@ const (
 
 var (
 	re = regexp.MustCompile(splitRegexStr)
+
+	PodPhaseMetricNames = map[corev1.PodPhase]string{
+		corev1.PodPending:   ci.MetricName(ci.TypePod, ci.StatusPending),
+		corev1.PodRunning:   ci.MetricName(ci.TypePod, ci.StatusRunning),
+		corev1.PodSucceeded: ci.MetricName(ci.TypePod, ci.StatusSucceeded),
+		corev1.PodFailed:    ci.MetricName(ci.TypePod, ci.StatusFailed),
+	}
+
+	PodConditionMetricNames = map[corev1.PodConditionType]string{
+		corev1.PodReady:     ci.MetricName(ci.TypePod, ci.StatusReady),
+		corev1.PodScheduled: ci.MetricName(ci.TypePod, ci.StatusScheduled),
+	}
+
+	PodConditionUnknownMetric = ci.MetricName(ci.TypePod, ci.StatusUnknown)
 )
 
 type cachedEntry struct {
@@ -93,19 +109,20 @@ type podClient interface {
 }
 
 type PodStore struct {
-	cache            *mapWithExpiry
-	prevMeasurements map[string]*mapWithExpiry // preMeasurements per each Type (Pod, Container, etc)
-	podClient        podClient
-	k8sClient        replicaSetInfoProvider
-	lastRefreshed    time.Time
-	nodeInfo         *nodeInfo
-	prefFullPodName  bool
-	logger           *zap.Logger
-	sync.Mutex
+	cache *mapWithExpiry
+	// prevMeasurements per each Type (Pod, Container, etc)
+	prevMeasurements          sync.Map // map[string]*mapWithExpiry
+	podClient                 podClient
+	k8sClient                 replicaSetInfoProvider
+	lastRefreshed             time.Time
+	nodeInfo                  *nodeInfo
+	prefFullPodName           bool
+	logger                    *zap.Logger
 	addFullPodNameMetricLabel bool
+	includeEnhancedMetrics    bool
 }
 
-func NewPodStore(hostIP string, prefFullPodName bool, addFullPodNameMetricLabel bool, logger *zap.Logger) (*PodStore, error) {
+func NewPodStore(hostIP string, prefFullPodName bool, addFullPodNameMetricLabel bool, includeEnhancedMetrics bool, logger *zap.Logger) (*PodStore, error) {
 	podClient, err := kubeletutil.NewKubeletClient(hostIP, ci.KubeSecurePort, logger)
 	if err != nil {
 		return nil, err
@@ -116,17 +133,27 @@ func NewPodStore(hostIP string, prefFullPodName bool, addFullPodNameMetricLabel 
 		return nil, fmt.Errorf("cannot get pod from kubelet, err: %w", err)
 	}
 
-	k8sClient := k8sclient.Get(logger)
+	nodeName := os.Getenv("HOST_NAME")
+	if nodeName == "" {
+		return nil, errors.New("missing environment variable HOST_NAME. Please check your deployment YAML config")
+	}
+
+	k8sClient := k8sclient.Get(logger,
+		k8sclient.NodeSelector(fields.OneTermEqualSelector("metadata.name", nodeName)),
+		k8sclient.CaptureNodeLevelInfo(true),
+	)
 	if k8sClient == nil {
 		return nil, errors.New("failed to start pod store because k8sclient is nil")
 	}
 
 	podStore := &PodStore{
-		cache:                     newMapWithExpiry(podsExpiry),
-		prevMeasurements:          make(map[string]*mapWithExpiry),
+		cache:            newMapWithExpiry(podsExpiry),
+		prevMeasurements: sync.Map{},
+		//prevMeasurements:          make(map[string]*mapWithExpiry),
 		podClient:                 podClient,
-		nodeInfo:                  newNodeInfo(logger),
+		nodeInfo:                  newNodeInfo(nodeName, k8sClient.GetNodeClient(), logger),
 		prefFullPodName:           prefFullPodName,
+		includeEnhancedMetrics:    includeEnhancedMetrics,
 		k8sClient:                 k8sClient,
 		logger:                    logger,
 		addFullPodNameMetricLabel: addFullPodNameMetricLabel,
@@ -138,21 +165,23 @@ func NewPodStore(hostIP string, prefFullPodName bool, addFullPodNameMetricLabel 
 func (p *PodStore) Shutdown() error {
 	var errs error
 	errs = p.cache.Shutdown()
-	for _, maps := range p.prevMeasurements {
-		if prevMeasErr := maps.Shutdown(); prevMeasErr != nil {
-			errs = errors.Join(errs, prevMeasErr)
-		}
-	}
+	p.prevMeasurements.Range(
+		func(key, prevMeasurement any) bool {
+			if prevMeasErr := prevMeasurement.(*mapWithExpiry).Shutdown(); prevMeasErr != nil {
+				errs = errors.Join(errs, prevMeasErr)
+			}
+			return true
+		})
 	return errs
 }
 
 func (p *PodStore) getPrevMeasurement(metricType, metricKey string) (any, bool) {
-	prevMeasurement, ok := p.prevMeasurements[metricType]
+	prevMeasurement, ok := p.prevMeasurements.Load(metricType)
 	if !ok {
 		return nil, false
 	}
 
-	content, ok := prevMeasurement.Get(metricKey)
+	content, ok := prevMeasurement.(*mapWithExpiry).Get(metricKey)
 
 	if !ok {
 		return nil, false
@@ -162,12 +191,12 @@ func (p *PodStore) getPrevMeasurement(metricType, metricKey string) (any, bool) 
 }
 
 func (p *PodStore) setPrevMeasurement(metricType, metricKey string, content any) {
-	prevMeasurement, ok := p.prevMeasurements[metricType]
+	prevMeasurement, ok := p.prevMeasurements.Load(metricType)
 	if !ok {
 		prevMeasurement = newMapWithExpiry(measurementsExpiry)
-		p.prevMeasurements[metricType] = prevMeasurement
+		p.prevMeasurements.Store(metricType, prevMeasurement)
 	}
-	prevMeasurement.Set(metricKey, content)
+	prevMeasurement.(*mapWithExpiry).Set(metricKey, content)
 }
 
 // RefreshTick triggers refreshing of the pod store.
@@ -179,6 +208,8 @@ func (p *PodStore) RefreshTick(ctx context.Context) {
 	now := time.Now()
 	if now.Sub(p.lastRefreshed) >= refreshInterval {
 		p.refresh(ctx, now)
+		// call cleanup every refresh cycle
+		p.cleanup(now)
 		p.lastRefreshed = now
 	}
 }
@@ -186,7 +217,7 @@ func (p *PodStore) RefreshTick(ctx context.Context) {
 func (p *PodStore) Decorate(ctx context.Context, metric CIMetric, kubernetesBlob map[string]any) bool {
 	if metric.GetTag(ci.MetricType) == ci.TypeNode {
 		p.decorateNode(metric)
-	} else if metric.GetTag(ci.K8sPodNameKey) != "" {
+	} else if metric.GetTag(ci.AttributeK8sPodName) != "" {
 		podKey := createPodKeyFromMetric(metric)
 		if podKey == "" {
 			p.logger.Error("podKey is unavailable when decorating pod")
@@ -225,8 +256,6 @@ func (p *PodStore) Decorate(ctx context.Context, metric CIMetric, kubernetesBlob
 }
 
 func (p *PodStore) getCachedEntry(podKey string) *cachedEntry {
-	p.Lock()
-	defer p.Unlock()
 	if content, ok := p.cache.Get(podKey); ok {
 		return content.(*cachedEntry)
 	}
@@ -234,8 +263,6 @@ func (p *PodStore) getCachedEntry(podKey string) *cachedEntry {
 }
 
 func (p *PodStore) setCachedEntry(podKey string, entry *cachedEntry) {
-	p.Lock()
-	defer p.Unlock()
 	p.cache.Set(podKey, entry)
 }
 
@@ -252,6 +279,17 @@ func (p *PodStore) refresh(ctx context.Context, now time.Time) {
 	p.refreshInternal(now, podList)
 }
 
+func (p *PodStore) cleanup(now time.Time) {
+	p.prevMeasurements.Range(
+		func(key, prevMeasurement any) bool {
+			prevMeasurement.(*mapWithExpiry).Lock()
+			prevMeasurement.(*mapWithExpiry).CleanUp(now)
+			prevMeasurement.(*mapWithExpiry).Unlock()
+			return true
+		})
+	p.cache.CleanUp(now)
+}
+
 func (p *PodStore) refreshInternal(now time.Time, podList []corev1.Pod) {
 	var podCount int
 	var containerCount int
@@ -265,6 +303,7 @@ func (p *PodStore) refreshInternal(now time.Time, podList []corev1.Pod) {
 			p.logger.Warn(fmt.Sprintf("podKey is unavailable, refresh pod store for pod %s", pod.Name))
 			continue
 		}
+		// filter out terminated pods
 		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
 			tmpCPUReq, _ := getResourceSettingForPod(&pod, p.nodeInfo.getCPUCapacity(), cpuKey, getRequestForContainer)
 			cpuRequest += tmpCPUReq
@@ -318,6 +357,33 @@ func (p *PodStore) decorateNode(metric CIMetric) {
 
 	metric.AddField(ci.MetricName(ci.TypeNode, ci.RunningPodCount), nodeStats.podCnt)
 	metric.AddField(ci.MetricName(ci.TypeNode, ci.RunningContainerCount), nodeStats.containerCnt)
+
+	if p.includeEnhancedMetrics {
+		if nodeStatusCapacityPods, ok := p.nodeInfo.getNodeStatusCapacityPods(); ok {
+			metric.AddField(ci.MetricName(ci.TypeNode, ci.StatusCapacityPods), nodeStatusCapacityPods)
+		}
+		if nodeStatusAllocatablePods, ok := p.nodeInfo.getNodeStatusAllocatablePods(); ok {
+			metric.AddField(ci.MetricName(ci.TypeNode, ci.StatusAllocatablePods), nodeStatusAllocatablePods)
+		}
+		if nodeStatusConditionReady, ok := p.nodeInfo.getNodeStatusCondition(corev1.NodeReady); ok {
+			metric.AddField(ci.MetricName(ci.TypeNode, ci.StatusConditionReady), nodeStatusConditionReady)
+		}
+		if nodeStatusConditionDiskPressure, ok := p.nodeInfo.getNodeStatusCondition(corev1.NodeDiskPressure); ok {
+			metric.AddField(ci.MetricName(ci.TypeNode, ci.StatusConditionDiskPressure), nodeStatusConditionDiskPressure)
+		}
+		if nodeStatusConditionMemoryPressure, ok := p.nodeInfo.getNodeStatusCondition(corev1.NodeMemoryPressure); ok {
+			metric.AddField(ci.MetricName(ci.TypeNode, ci.StatusConditionMemoryPressure), nodeStatusConditionMemoryPressure)
+		}
+		if nodeStatusConditionPIDPressure, ok := p.nodeInfo.getNodeStatusCondition(corev1.NodePIDPressure); ok {
+			metric.AddField(ci.MetricName(ci.TypeNode, ci.StatusConditionPIDPressure), nodeStatusConditionPIDPressure)
+		}
+		if nodeStatusConditionNetworkUnavailable, ok := p.nodeInfo.getNodeStatusCondition(corev1.NodeNetworkUnavailable); ok {
+			metric.AddField(ci.MetricName(ci.TypeNode, ci.StatusConditionNetworkUnavailable), nodeStatusConditionNetworkUnavailable)
+		}
+		if nodeStatusConditionUnknown, ok := p.nodeInfo.getNodeConditionUnknown(); ok {
+			metric.AddField(ci.MetricName(ci.TypeNode, ci.StatusConditionUnknown), nodeStatusConditionUnknown)
+		}
+	}
 }
 
 func (p *PodStore) decorateCPU(metric CIMetric, pod *corev1.Pod) {
@@ -347,14 +413,18 @@ func (p *PodStore) decorateCPU(metric CIMetric, pod *corev1.Pod) {
 	} else if metric.GetTag(ci.MetricType) == ci.TypeContainer {
 		// add cpu limit and request for container
 		if metric.HasField(ci.MetricName(ci.TypeContainer, ci.CPUTotal)) {
-			if containerName := metric.GetTag(ci.ContainerNamekey); containerName != "" {
+			containerCPUTotal := metric.GetField(ci.MetricName(ci.TypeContainer, ci.CPUTotal))
+			if containerName := metric.GetTag(ci.AttributeContainerName); containerName != "" {
 				for _, containerSpec := range pod.Spec.Containers {
 					if containerSpec.Name == containerName {
-						if cpuLimit, ok := getLimitForContainer(cpuKey, containerSpec); ok {
-							metric.AddField(ci.MetricName(ci.TypeContainer, ci.CPULimit), cpuLimit)
+						if containerCPULimit, ok := getLimitForContainer(cpuKey, containerSpec); ok {
+							metric.AddField(ci.MetricName(ci.TypeContainer, ci.CPULimit), containerCPULimit)
+							if p.includeEnhancedMetrics {
+								metric.AddField(ci.MetricName(ci.TypeContainer, ci.CPUUtilizationOverContainerLimit), containerCPUTotal.(float64)/float64(containerCPULimit)*100)
+							}
 						}
-						if cpuReq, ok := getRequestForContainer(cpuKey, containerSpec); ok {
-							metric.AddField(ci.MetricName(ci.TypeContainer, ci.CPURequest), cpuReq)
+						if containerCPUReq, ok := getRequestForContainer(cpuKey, containerSpec); ok {
+							metric.AddField(ci.MetricName(ci.TypeContainer, ci.CPURequest), containerCPUReq)
 						}
 					}
 				}
@@ -390,15 +460,20 @@ func (p *PodStore) decorateMem(metric CIMetric, pod *corev1.Pod) {
 		}
 	} else if metric.GetTag(ci.MetricType) == ci.TypeContainer {
 		// add mem limit and request for container
-		if metric.HasField(ci.MetricName(ci.TypeContainer, ci.MemWorkingset)) {
-			if containerName := metric.GetTag(ci.ContainerNamekey); containerName != "" {
+		memWorkingsetMetric := ci.MetricName(ci.TypeContainer, ci.MemWorkingset)
+		if metric.HasField(memWorkingsetMetric) {
+			containerMemWorkingset := metric.GetField(memWorkingsetMetric)
+			if containerName := metric.GetTag(ci.AttributeContainerName); containerName != "" {
 				for _, containerSpec := range pod.Spec.Containers {
 					if containerSpec.Name == containerName {
-						if memLimit, ok := getLimitForContainer(memoryKey, containerSpec); ok {
-							metric.AddField(ci.MetricName(ci.TypeContainer, ci.MemLimit), memLimit)
+						if containerMemLimit, ok := getLimitForContainer(memoryKey, containerSpec); ok {
+							metric.AddField(ci.MetricName(ci.TypeContainer, ci.MemLimit), containerMemLimit)
+							if p.includeEnhancedMetrics {
+								metric.AddField(ci.MetricName(ci.TypeContainer, ci.MemUtilizationOverContainerLimit), float64(containerMemWorkingset.(uint64))/float64(containerMemLimit)*100)
+							}
 						}
-						if memReq, ok := getRequestForContainer(memoryKey, containerSpec); ok {
-							metric.AddField(ci.MetricName(ci.TypeContainer, ci.MemRequest), memReq)
+						if containerMemReq, ok := getRequestForContainer(memoryKey, containerSpec); ok {
+							metric.AddField(ci.MetricName(ci.TypeContainer, ci.MemRequest), containerMemReq)
 						}
 					}
 				}
@@ -410,10 +485,18 @@ func (p *PodStore) decorateMem(metric CIMetric, pod *corev1.Pod) {
 func (p *PodStore) addStatus(metric CIMetric, pod *corev1.Pod) {
 	if metric.GetTag(ci.MetricType) == ci.TypePod {
 		metric.AddTag(ci.PodStatus, string(pod.Status.Phase))
+
+		if p.includeEnhancedMetrics {
+			p.addPodStatusMetrics(metric, pod)
+			p.addPodConditionMetrics(metric, pod)
+			p.addPodContainerStatusMetrics(metric, pod)
+		}
+
 		var curContainerRestarts int
 		for _, containerStatus := range pod.Status.ContainerStatuses {
 			curContainerRestarts += int(containerStatus.RestartCount)
 		}
+
 		podKey := createPodKeyFromMetric(metric)
 		if podKey != "" {
 			content, ok := p.getPrevMeasurement(ci.TypePod, podKey)
@@ -428,7 +511,7 @@ func (p *PodStore) addStatus(metric CIMetric, pod *corev1.Pod) {
 			p.setPrevMeasurement(ci.TypePod, podKey, prevPodMeasurement{containersRestarts: curContainerRestarts})
 		}
 	} else if metric.GetTag(ci.MetricType) == ci.TypeContainer {
-		if containerName := metric.GetTag(ci.ContainerNamekey); containerName != "" {
+		if containerName := metric.GetTag(ci.AttributeContainerName); containerName != "" {
 			for _, containerStatus := range pod.Status.ContainerStatuses {
 				if containerStatus.Name == containerName {
 					switch {
@@ -465,6 +548,78 @@ func (p *PodStore) addStatus(metric CIMetric, pod *corev1.Pod) {
 				}
 			}
 		}
+	}
+}
+
+func (p *PodStore) addPodStatusMetrics(metric CIMetric, pod *corev1.Pod) {
+	for _, metricName := range PodPhaseMetricNames {
+		metric.AddField(metricName, 0)
+	}
+
+	statusMetricName, validStatus := PodPhaseMetricNames[pod.Status.Phase]
+	if validStatus {
+		metric.AddField(statusMetricName, 1)
+	}
+}
+
+func (p *PodStore) addPodConditionMetrics(metric CIMetric, pod *corev1.Pod) {
+	for _, metricName := range PodConditionMetricNames {
+		metric.AddField(metricName, 0)
+	}
+
+	metric.AddField(PodConditionUnknownMetric, 0)
+
+	for _, condition := range pod.Status.Conditions {
+
+		switch condition.Status {
+		case corev1.ConditionTrue:
+			if statusMetricName, ok := PodConditionMetricNames[condition.Type]; ok {
+				metric.AddField(statusMetricName, 1)
+			}
+		case corev1.ConditionUnknown:
+			if _, ok := PodConditionMetricNames[condition.Type]; ok {
+				metric.AddField(PodConditionUnknownMetric, 1)
+			}
+		}
+
+	}
+}
+
+func (p *PodStore) addPodContainerStatusMetrics(metric CIMetric, pod *corev1.Pod) {
+	possibleStatuses := map[string]int{
+		ci.StatusContainerRunning:    0,
+		ci.StatusContainerWaiting:    0,
+		ci.StatusContainerTerminated: 0,
+	}
+	for _, containerStatus := range pod.Status.ContainerStatuses {
+		switch {
+		case containerStatus.State.Running != nil:
+			possibleStatuses[ci.StatusContainerRunning]++
+		case containerStatus.State.Waiting != nil:
+			possibleStatuses[ci.StatusContainerWaiting]++
+			reason := containerStatus.State.Waiting.Reason
+			if reason != "" {
+				if val, ok := ci.WaitingReasonLookup[reason]; ok {
+					possibleStatuses[val]++
+				}
+			}
+		case containerStatus.State.Terminated != nil:
+			possibleStatuses[ci.StatusContainerTerminated]++
+			if containerStatus.State.Terminated.Reason != "" {
+				metric.AddTag(ci.ContainerStatusReason, containerStatus.State.Terminated.Reason)
+			}
+		}
+
+		if containerStatus.LastTerminationState.Terminated != nil && containerStatus.LastTerminationState.Terminated.Reason != "" {
+			if strings.Contains(containerStatus.LastTerminationState.Terminated.Reason, "OOMKilled") {
+				possibleStatuses[ci.StatusContainerTerminatedReasonOOMKilled]++
+			}
+		}
+	}
+
+	for name, val := range possibleStatuses {
+		// desired prefix: pod_container_
+		metric.AddField(ci.MetricName(ci.TypePod, name), val)
 	}
 }
 
@@ -522,10 +677,10 @@ func getRequestForContainer(resource corev1.ResourceName, spec corev1.Container)
 }
 
 func addContainerID(pod *corev1.Pod, metric CIMetric, kubernetesBlob map[string]any, logger *zap.Logger) {
-	if containerName := metric.GetTag(ci.ContainerNamekey); containerName != "" {
+	if containerName := metric.GetTag(ci.AttributeContainerName); containerName != "" {
 		rawID := ""
 		for _, container := range pod.Status.ContainerStatuses {
-			if metric.GetTag(ci.ContainerNamekey) == container.Name {
+			if metric.GetTag(ci.AttributeContainerName) == container.Name {
 				rawID = container.ContainerID
 				if rawID != "" {
 					ids := strings.Split(rawID, "://")
@@ -540,9 +695,9 @@ func addContainerID(pod *corev1.Pod, metric CIMetric, kubernetesBlob map[string]
 			}
 		}
 		if rawID == "" {
-			kubernetesBlob["container_id"] = metric.GetTag(ci.ContainerIDkey)
+			kubernetesBlob["container_id"] = metric.GetTag(ci.AttributeContainerID)
 		}
-		metric.RemoveTag(ci.ContainerIDkey)
+		metric.RemoveTag(ci.AttributeContainerID)
 	}
 }
 
@@ -611,9 +766,9 @@ func (p *PodStore) addPodOwnersAndPodName(metric CIMetric, pod *corev1.Pod, kube
 		}
 	}
 
-	metric.AddTag(ci.PodNameKey, podName)
+	metric.AddTag(ci.AttributePodName, podName)
 	if p.addFullPodNameMetricLabel {
-		metric.AddTag(ci.FullPodNameKey, pod.Name)
+		metric.AddTag(ci.AttributeFullPodName, pod.Name)
 	}
 }
 

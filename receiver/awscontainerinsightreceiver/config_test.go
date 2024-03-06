@@ -33,10 +33,58 @@ func TestLoadConfig(t *testing.T) {
 		{
 			id: component.NewIDWithName(metadata.Type, "collection_interval_settings"),
 			expected: &Config{
-				CollectionInterval:    60 * time.Second,
-				ContainerOrchestrator: "eks",
-				TagService:            true,
-				PrefFullPodName:       false,
+				CollectionInterval:        60 * time.Second,
+				ContainerOrchestrator:     "eks",
+				TagService:                true,
+				PrefFullPodName:           false,
+				LeaderLockName:            "otel-container-insight-clusterleader",
+				EnableControlPlaneMetrics: false,
+			},
+		},
+		{
+			id: component.NewIDWithName(metadata.Type, "cluster_name"),
+			expected: &Config{
+				CollectionInterval:        60 * time.Second,
+				ContainerOrchestrator:     "eks",
+				TagService:                true,
+				PrefFullPodName:           false,
+				ClusterName:               "override_cluster",
+				LeaderLockName:            "otel-container-insight-clusterleader",
+				EnableControlPlaneMetrics: false,
+			},
+		},
+		{
+			id: component.NewIDWithName(metadata.Type, "leader_lock_name"),
+			expected: &Config{
+				CollectionInterval:        60 * time.Second,
+				ContainerOrchestrator:     "eks",
+				TagService:                true,
+				PrefFullPodName:           false,
+				LeaderLockName:            "override-container-insight-clusterleader",
+				EnableControlPlaneMetrics: false,
+			},
+		},
+		{
+			id: component.NewIDWithName(metadata.Type, "leader_lock_using_config_map_only"),
+			expected: &Config{
+				CollectionInterval:           60 * time.Second,
+				ContainerOrchestrator:        "eks",
+				TagService:                   true,
+				PrefFullPodName:              false,
+				LeaderLockName:               "otel-container-insight-clusterleader",
+				LeaderLockUsingConfigMapOnly: true,
+				EnableControlPlaneMetrics:    false,
+			},
+		},
+		{
+			id: component.NewIDWithName(metadata.Type, "enable_control_plane_metrics"),
+			expected: &Config{
+				CollectionInterval:        60 * time.Second,
+				ContainerOrchestrator:     "eks",
+				TagService:                true,
+				PrefFullPodName:           false,
+				LeaderLockName:            "otel-container-insight-clusterleader",
+				EnableControlPlaneMetrics: true,
 			},
 		},
 	}

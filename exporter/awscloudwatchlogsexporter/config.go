@@ -9,7 +9,6 @@ import (
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/configretry"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
-	"go.uber.org/zap"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/awsutil"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/cwlogs"
@@ -40,18 +39,23 @@ type Config struct {
 	// Tags is the option to set tags for the CloudWatch Log Group.  If specified, please add add at least 1 and at most 50 tags.  Input is a string to string map like so: { 'key': 'value' }
 	// Keys must be between 1-128 characters and follow the regex pattern: ^([\p{L}\p{Z}\p{N}_.:/=+\-@]+)$
 	// Values must be between 1-256 characters and follow the regex pattern: ^([\p{L}\p{Z}\p{N}_.:/=+\-@]*)$
-	Tags map[string]*string `mapstructure:"tags"`
+	Tags map[string]*string `mapstructure:"tags,omitempty"`
 
 	// Queue settings frm the exporterhelper
 	exporterhelper.QueueSettings `mapstructure:"sending_queue"`
-
-	logger *zap.Logger
 
 	awsutil.AWSSessionSettings `mapstructure:",squash"`
 
 	// Export raw log string instead of log wrapper
 	// Required for emf logs
 	RawLog bool `mapstructure:"raw_log,omitempty"`
+
+	// Only allow emf logs
+	// If this is true raw log must also be true
+	EmfOnly bool `mapstructure:"emf_only,omitempty"`
+
+	// MiddlewareID is an ID for an extension that can be used to configure the AWS client.
+	MiddlewareID *component.ID `mapstructure:"middleware,omitempty"`
 }
 
 var _ component.Config = (*Config)(nil)
@@ -68,12 +72,13 @@ func (config *Config) Validate() error {
 	if err := config.QueueSettings.Validate(); err != nil {
 		return err
 	}
-
 	if retErr := cwlogs.ValidateRetentionValue(config.LogRetention); retErr != nil {
 		return retErr
 	}
+	if config.EmfOnly && !config.RawLog {
+		return errors.New("emf only is true, but raw log is false")
+	}
 	return cwlogs.ValidateTagsInput(config.Tags)
-
 }
 
 // TODO(jbd): Add ARN role to config.

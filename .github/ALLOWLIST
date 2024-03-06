@@ -15,16 +15,14 @@
 #
 
 ## 
-# NOTE: New components MUST have one or more codeowners. Add codeowners to the component metadata.yaml and run make gengithub
+# NOTE: New components MUST have a codeowner. Add new components to the CODEOWNERS file instead of here.
 ##
 
 ## COMMON & SHARED components
 internal/common
+config/confighttp
 
 ## DEPRECATED components
-exporter/f5cloudexporter/
-processor/spanmetricsprocessor/
 
 ## UNMAINTAINED components
-exporter/alibabacloudlogserviceexporter/
-exporter/skywalkingexporter/
+receiver/wavefrontreceiver/

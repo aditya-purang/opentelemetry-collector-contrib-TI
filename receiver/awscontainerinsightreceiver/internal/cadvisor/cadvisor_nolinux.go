@@ -9,7 +9,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.uber.org/zap"
 
-	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/cadvisor/extractors"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/stores"
 )
 
 // cadvisor doesn't support windows, define the dummy functions
@@ -25,7 +25,7 @@ type Cadvisor struct {
 }
 
 type Decorator interface {
-	Decorate(*extractors.CAdvisorMetric) *extractors.CAdvisorMetric
+	Decorate(*stores.RawContainerInsightsMetric) *stores.RawContainerInsightsMetric
 	Shutdown() error
 }
 

@@ -22,6 +22,8 @@ Before performing sampling, spans will be grouped by `trace_id`. Therefore, the 
 
 This processor must be placed in pipelines after any processors that rely on context, e.g. `k8sattributes`. It reassembles spans into new batches, causing them to lose their original context.
 
+This processor must be placed in pipelines after any processors that rely on context, e.g. `k8sattributes`. It reassembles spans into new batches, causing them to lose their original context.
+
 Please refer to [config.go](./config.go) for the config spec.
 
 The following configuration options are required:

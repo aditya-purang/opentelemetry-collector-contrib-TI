@@ -10,12 +10,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-
-	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/cadvisor"
-	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/cadvisor/extractors"
 )
-
-var _ cadvisor.Decorator = &K8sDecorator{}
 
 // CIMetric represents the raw metric interface for container insights
 type CIMetric interface {
@@ -39,23 +34,24 @@ type K8sDecorator struct {
 	// It would be easier to keep the ctx here than passing it as a parameter for Decorate(...) function.
 	// The K8sStore (e.g. podstore) does network request in Decorate function, thus needs to take a context
 	// object for canceling the request
-	ctx context.Context
+	ctx                         context.Context
+	addContainerNameMetricLabel bool
 	// the pod store needs to be saved here because the map it is stateful and needs to be shut down.
 	podStore *PodStore
 }
 
-func NewK8sDecorator(ctx context.Context, tagService bool, prefFullPodName bool, addFullPodNameMetricLabel bool, logger *zap.Logger) (*K8sDecorator, error) {
+func NewK8sDecorator(ctx context.Context, tagService bool, prefFullPodName bool, addFullPodNameMetricLabel bool, addContainerNameMetricLabel bool, includeEnhancedMetrics bool, logger *zap.Logger) (*K8sDecorator, error) {
 	hostIP := os.Getenv("HOST_IP")
 	if hostIP == "" {
 		return nil, errors.New("environment variable HOST_IP is not set in k8s deployment config")
 	}
 
 	k := &K8sDecorator{
-		ctx: ctx,
+		ctx:                         ctx,
+		addContainerNameMetricLabel: addContainerNameMetricLabel,
 	}
 
-	podstore, err := NewPodStore(hostIP, prefFullPodName, addFullPodNameMetricLabel, logger)
-
+	podstore, err := NewPodStore(hostIP, prefFullPodName, addFullPodNameMetricLabel, includeEnhancedMetrics, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +84,7 @@ func NewK8sDecorator(ctx context.Context, tagService bool, prefFullPodName bool,
 	return k, nil
 }
 
-func (k *K8sDecorator) Decorate(metric *extractors.CAdvisorMetric) *extractors.CAdvisorMetric {
+func (k *K8sDecorator) Decorate(metric CIMetric) CIMetric {
 	kubernetesBlob := map[string]any{}
 	for _, store := range k.stores {
 		ok := store.Decorate(k.ctx, metric, kubernetesBlob)
@@ -97,7 +93,7 @@ func (k *K8sDecorator) Decorate(metric *extractors.CAdvisorMetric) *extractors.C
 		}
 	}
 
-	AddKubernetesInfo(metric, kubernetesBlob)
+	AddKubernetesInfo(metric, kubernetesBlob, k.addContainerNameMetricLabel)
 	TagMetricSource(metric)
 	return metric
 }

@@ -2,3 +2,11 @@ awscontainerinsightreceiver:
   container_orchestrator: eks
 awscontainerinsightreceiver/collection_interval_settings:
   collection_interval: 60s
+awscontainerinsightreceiver/cluster_name:
+  cluster_name: override_cluster
+awscontainerinsightreceiver/leader_lock_name:
+  leader_lock_name: override-container-insight-clusterleader
+awscontainerinsightreceiver/leader_lock_using_config_map_only:
+  leader_lock_using_config_map_only: true
+awscontainerinsightreceiver/enable_control_plane_metrics:
+  enable_control_plane_metrics: true

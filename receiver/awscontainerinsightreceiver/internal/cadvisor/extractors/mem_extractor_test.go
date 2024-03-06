@@ -10,6 +10,7 @@ import (
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/containerinsight"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/cadvisor/testutils"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/stores"
 )
 
 func TestMemStats(t *testing.T) {
@@ -20,7 +21,7 @@ func TestMemStats(t *testing.T) {
 	containerType := containerinsight.TypeContainer
 	extractor := NewMemMetricExtractor(nil)
 
-	var cMetrics []*CAdvisorMetric
+	var cMetrics []*stores.RawContainerInsightsMetric
 	if extractor.HasValue(result[0]) {
 		cMetrics = extractor.GetValue(result[0], MockCPUMemInfo, containerType)
 	}
@@ -42,6 +43,7 @@ func TestMemStats(t *testing.T) {
 	AssertContainsTaggedFloat(t, cMetrics[0], "container_memory_hierarchical_pgfault", 1000, 0)
 	AssertContainsTaggedFloat(t, cMetrics[0], "container_memory_pgmajfault", 10, 0)
 	AssertContainsTaggedFloat(t, cMetrics[0], "container_memory_hierarchical_pgmajfault", 10, 0)
+	AssertContainsTaggedFloat(t, cMetrics[0], "container_memory_failures_total", 1010, 0.0000001)
 
 	// for node type
 	containerType = containerinsight.TypeNode

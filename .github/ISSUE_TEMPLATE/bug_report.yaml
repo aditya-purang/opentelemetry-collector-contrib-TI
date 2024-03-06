@@ -84,6 +84,7 @@ body:
       - exporter/zipkin
       - extension/ack
       - extension/asapauth
+      - extension/awsmiddleware
       - extension/awsproxy
       - extension/basicauth
       - extension/bearertokenauth
@@ -130,6 +131,7 @@ body:
       - internal/splunk
       - internal/sqlquery
       - internal/tools
+      - override/aws
       - pkg/batchperresourceattr
       - pkg/batchpersignal
       - pkg/experimentalmetricmetadata

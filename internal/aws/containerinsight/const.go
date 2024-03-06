@@ -28,32 +28,35 @@ const (
 	Timestamp               = "Timestamp"
 
 	// The following constants are used for metric name construction
-	CPUTotal                   = "cpu_usage_total"
-	CPUUser                    = "cpu_usage_user"
-	CPUSystem                  = "cpu_usage_system"
-	CPULimit                   = "cpu_limit"
-	CPUUtilization             = "cpu_utilization"
-	CPURequest                 = "cpu_request"
-	CPUReservedCapacity        = "cpu_reserved_capacity"
-	CPUUtilizationOverPodLimit = "cpu_utilization_over_pod_limit"
+	CPUTotal                         = "cpu_usage_total"
+	CPUUser                          = "cpu_usage_user"
+	CPUSystem                        = "cpu_usage_system"
+	CPULimit                         = "cpu_limit"
+	CPUUtilization                   = "cpu_utilization"
+	CPURequest                       = "cpu_request"
+	CPUReservedCapacity              = "cpu_reserved_capacity"
+	CPUUtilizationOverPodLimit       = "cpu_utilization_over_pod_limit"
+	CPUUtilizationOverContainerLimit = "cpu_utilization_over_container_limit"
 
-	MemUsage                   = "memory_usage"
-	MemCache                   = "memory_cache"
-	MemRss                     = "memory_rss"
-	MemMaxusage                = "memory_max_usage"
-	MemSwap                    = "memory_swap"
-	MemFailcnt                 = "memory_failcnt"
-	MemMappedfile              = "memory_mapped_file"
-	MemWorkingset              = "memory_working_set"
-	MemPgfault                 = "memory_pgfault"
-	MemPgmajfault              = "memory_pgmajfault"
-	MemHierarchicalPgfault     = "memory_hierarchical_pgfault"
-	MemHierarchicalPgmajfault  = "memory_hierarchical_pgmajfault"
-	MemLimit                   = "memory_limit"
-	MemRequest                 = "memory_request"
-	MemUtilization             = "memory_utilization"
-	MemReservedCapacity        = "memory_reserved_capacity"
-	MemUtilizationOverPodLimit = "memory_utilization_over_pod_limit"
+	MemUsage                         = "memory_usage"
+	MemCache                         = "memory_cache"
+	MemRss                           = "memory_rss"
+	MemMaxusage                      = "memory_max_usage"
+	MemSwap                          = "memory_swap"
+	MemFailcnt                       = "memory_failcnt"
+	MemMappedfile                    = "memory_mapped_file"
+	MemWorkingset                    = "memory_working_set"
+	MemPgfault                       = "memory_pgfault"
+	MemPgmajfault                    = "memory_pgmajfault"
+	MemFailuresTotal                 = "memory_failures_total"
+	MemHierarchicalPgfault           = "memory_hierarchical_pgfault"
+	MemHierarchicalPgmajfault        = "memory_hierarchical_pgmajfault"
+	MemLimit                         = "memory_limit"
+	MemRequest                       = "memory_request"
+	MemUtilization                   = "memory_utilization"
+	MemReservedCapacity              = "memory_reserved_capacity"
+	MemUtilizationOverPodLimit       = "memory_utilization_over_pod_limit"
+	MemUtilizationOverContainerLimit = "memory_utilization_over_container_limit"
 
 	NetIfce       = "interface"
 	NetRxBytes    = "network_rx_bytes"
@@ -73,6 +76,40 @@ const (
 	FSInodesfree  = "filesystem_inodes_free"
 	FSUtilization = "filesystem_utilization"
 
+	StatusConditionReady                                   = "status_condition_ready"
+	StatusConditionDiskPressure                            = "status_condition_disk_pressure"
+	StatusConditionMemoryPressure                          = "status_condition_memory_pressure"
+	StatusConditionPIDPressure                             = "status_condition_pid_pressure"
+	StatusConditionNetworkUnavailable                      = "status_condition_network_unavailable"
+	StatusConditionUnknown                                 = "status_condition_unknown"
+	StatusCapacityPods                                     = "status_capacity_pods"
+	StatusAllocatablePods                                  = "status_allocatable_pods"
+	StatusNumberAvailable                                  = "status_number_available"
+	StatusNumberUnavailable                                = "status_number_unavailable"
+	StatusDesiredNumberScheduled                           = "status_desired_number_scheduled"
+	StatusCurrentNumberScheduled                           = "status_current_number_scheduled"
+	StatusReplicasAvailable                                = "status_replicas_available"
+	StatusReplicasUnavailable                              = "status_replicas_unavailable"
+	SpecReplicas                                           = "spec_replicas"
+	StatusContainerRunning                                 = "container_status_running"
+	StatusContainerTerminated                              = "container_status_terminated"
+	StatusContainerWaiting                                 = "container_status_waiting"
+	StatusContainerWaitingReasonCrashLoopBackOff           = "container_status_waiting_reason_crash_loop_back_off"
+	StatusContainerWaitingReasonImagePullError             = "container_status_waiting_reason_image_pull_error"
+	StatusContainerWaitingReasonStartError                 = "container_status_waiting_reason_start_error"
+	StatusContainerWaitingReasonCreateContainerError       = "container_status_waiting_reason_create_container_error"
+	StatusContainerWaitingReasonCreateContainerConfigError = "container_status_waiting_reason_create_container_config_error"
+	StatusContainerTerminatedReasonOOMKilled               = "container_status_terminated_reason_oom_killed"
+	StatusRunning                                          = "status_running"
+	StatusPending                                          = "status_pending"
+	StatusSucceeded                                        = "status_succeeded"
+	StatusFailed                                           = "status_failed"
+	StatusUnknown                                          = "status_unknown"
+	StatusReady                                            = "status_ready"
+	StatusScheduled                                        = "status_scheduled"
+	ReplicasDesired                                        = "replicas_desired"
+	ReplicasReady                                          = "replicas_ready"
+
 	RunningPodCount       = "number_of_running_pods"
 	RunningContainerCount = "number_of_running_containers"
 	ContainerCount        = "number_of_containers"
@@ -90,26 +127,34 @@ const (
 	DiskIOTotal              = "Total"
 
 	// Define the metric types
-	TypeCluster          = "Cluster"
-	TypeClusterService   = "ClusterService"
-	TypeClusterNamespace = "ClusterNamespace"
-	TypeService          = "Service"
-	TypeInstance         = "Instance" // mean EC2 Instance in ECS
-	TypeNode             = "Node"     // mean EC2 Instance in EKS
-	TypeInstanceFS       = "InstanceFS"
-	TypeNodeFS           = "NodeFS"
-	TypeInstanceNet      = "InstanceNet"
-	TypeNodeNet          = "NodeNet"
-	TypeInstanceDiskIO   = "InstanceDiskIO"
-	TypeNodeDiskIO       = "NodeDiskIO"
-	TypePod              = "Pod"
-	TypePodNet           = "PodNet"
-	TypeContainer        = "Container"
-	TypeContainerFS      = "ContainerFS"
-	TypeContainerDiskIO  = "ContainerDiskIO"
+	TypeCluster            = "Cluster"
+	TypeClusterService     = "ClusterService"
+	TypeClusterDeployment  = "ClusterDeployment"
+	TypeClusterDaemonSet   = "ClusterDaemonSet"
+	TypeClusterStatefulSet = "ClusterStatefulSet"
+	TypeClusterReplicaSet  = "ClusterReplicaSet"
+	TypeClusterNamespace   = "ClusterNamespace"
+	TypeService            = "Service"
+	TypeInstance           = "Instance" // mean EC2 Instance in ECS
+	TypeNode               = "Node"     // mean EC2 Instance in EKS
+	TypeInstanceFS         = "InstanceFS"
+	TypeNodeFS             = "NodeFS"
+	TypeInstanceNet        = "InstanceNet"
+	TypeNodeNet            = "NodeNet"
+	TypeInstanceDiskIO     = "InstanceDiskIO"
+	TypeNodeDiskIO         = "NodeDiskIO"
+	TypePod                = "Pod"
+	TypePodNet             = "PodNet"
+	TypeContainer          = "Container"
+	TypeContainerFS        = "ContainerFS"
+	TypeContainerDiskIO    = "ContainerDiskIO"
 	// Special type for pause container
 	// because containerd does not set container name pause container name to POD like docker does.
 	TypeInfraContainer = "InfraContainer"
+	TypeGpuContainer   = "ContainerGPU"
+	TypeGpuPod         = "PodGPU"
+	TypeGpuNode        = "NodeGPU"
+	TypeGpuCluster     = "ClusterGPU"
 
 	// unit
 	UnitBytes       = "Bytes"
@@ -122,6 +167,16 @@ const (
 	UnitPercent     = "Percent"
 )
 
+var WaitingReasonLookup = map[string]string{
+	"CrashLoopBackOff":           StatusContainerWaitingReasonCrashLoopBackOff,
+	"ErrImagePull":               StatusContainerWaitingReasonImagePullError,
+	"ImagePullBackOff":           StatusContainerWaitingReasonImagePullError,
+	"InvalidImageName":           StatusContainerWaitingReasonImagePullError,
+	"CreateContainerError":       StatusContainerWaitingReasonCreateContainerError,
+	"CreateContainerConfigError": StatusContainerWaitingReasonCreateContainerConfigError,
+	"StartError":                 StatusContainerWaitingReasonStartError,
+}
+
 var metricToUnitMap map[string]string
 
 func init() {
@@ -133,27 +188,30 @@ func init() {
 		// CPUSystem
 		// CPULimit
 		// CPURequest
-		CPUUtilization:             UnitPercent,
-		CPUReservedCapacity:        UnitPercent,
-		CPUUtilizationOverPodLimit: UnitPercent,
+		CPUUtilization:                   UnitPercent,
+		CPUReservedCapacity:              UnitPercent,
+		CPUUtilizationOverPodLimit:       UnitPercent,
+		CPUUtilizationOverContainerLimit: UnitPercent,
 
 		// memory metrics
-		MemUsage:                   UnitBytes,
-		MemCache:                   UnitBytes,
-		MemRss:                     UnitBytes,
-		MemMaxusage:                UnitBytes,
-		MemSwap:                    UnitBytes,
-		MemFailcnt:                 UnitCount,
-		MemMappedfile:              UnitBytes,
-		MemWorkingset:              UnitBytes,
-		MemRequest:                 UnitBytes,
-		MemLimit:                   UnitBytes,
-		MemUtilization:             UnitPercent,
-		MemReservedCapacity:        UnitPercent,
-		MemUtilizationOverPodLimit: UnitPercent,
+		MemUsage:                         UnitBytes,
+		MemCache:                         UnitBytes,
+		MemRss:                           UnitBytes,
+		MemMaxusage:                      UnitBytes,
+		MemSwap:                          UnitBytes,
+		MemFailcnt:                       UnitCount,
+		MemMappedfile:                    UnitBytes,
+		MemWorkingset:                    UnitBytes,
+		MemRequest:                       UnitBytes,
+		MemLimit:                         UnitBytes,
+		MemUtilization:                   UnitPercent,
+		MemReservedCapacity:              UnitPercent,
+		MemUtilizationOverPodLimit:       UnitPercent,
+		MemUtilizationOverContainerLimit: UnitPercent,
 
 		MemPgfault:                UnitCountPerSec,
 		MemPgmajfault:             UnitCountPerSec,
+		MemFailuresTotal:          UnitCountPerSec,
 		MemHierarchicalPgfault:    UnitCountPerSec,
 		MemHierarchicalPgmajfault: UnitCountPerSec,
 
@@ -187,6 +245,43 @@ func init() {
 		FSInodes:      UnitCount,
 		FSInodesfree:  UnitCount,
 		FSUtilization: UnitPercent,
+
+		// status & spec metrics
+		StatusConditionReady:              UnitCount,
+		StatusConditionDiskPressure:       UnitCount,
+		StatusConditionMemoryPressure:     UnitCount,
+		StatusConditionPIDPressure:        UnitCount,
+		StatusConditionNetworkUnavailable: UnitCount,
+		StatusConditionUnknown:            UnitCount,
+		StatusCapacityPods:                UnitCount,
+		StatusAllocatablePods:             UnitCount,
+		StatusReplicasAvailable:           UnitCount,
+		StatusReplicasUnavailable:         UnitCount,
+		StatusNumberAvailable:             UnitCount,
+		StatusNumberUnavailable:           UnitCount,
+		StatusDesiredNumberScheduled:      UnitCount,
+		StatusCurrentNumberScheduled:      UnitCount,
+		SpecReplicas:                      UnitCount,
+		ReplicasDesired:                   UnitCount,
+		ReplicasReady:                     UnitCount,
+
+		// kube-state-metrics equivalents
+		StatusContainerRunning:                                 UnitCount,
+		StatusContainerTerminated:                              UnitCount,
+		StatusContainerWaiting:                                 UnitCount,
+		StatusContainerWaitingReasonCrashLoopBackOff:           UnitCount,
+		StatusContainerWaitingReasonImagePullError:             UnitCount,
+		StatusContainerWaitingReasonStartError:                 UnitCount,
+		StatusContainerWaitingReasonCreateContainerConfigError: UnitCount,
+		StatusContainerWaitingReasonCreateContainerError:       UnitCount,
+		StatusContainerTerminatedReasonOOMKilled:               UnitCount,
+		StatusRunning:                                          UnitCount,
+		StatusFailed:                                           UnitCount,
+		StatusPending:                                          UnitCount,
+		StatusSucceeded:                                        UnitCount,
+		StatusUnknown:                                          UnitCount,
+		StatusReady:                                            UnitCount,
+		StatusScheduled:                                        UnitCount,
 
 		// cluster metrics
 		NodeCount:       UnitCount,

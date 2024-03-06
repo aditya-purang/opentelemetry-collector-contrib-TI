@@ -77,7 +77,7 @@ func TestInfo(t *testing.T) {
 			return nil, errors.New("error")
 		}
 	}
-	m, err := NewInfo(ci.EKS, time.Minute, zap.NewNop(), nodeCapacityCreatorOpt)
+	m, err := NewInfo(awsutil.CreateDefaultSessionConfig(), ci.EKS, time.Minute, zap.NewNop(), nodeCapacityCreatorOpt)
 	assert.Nil(t, m)
 	assert.Error(t, err)
 
@@ -92,7 +92,7 @@ func TestInfo(t *testing.T) {
 			return nil, nil, errors.New("error")
 		}
 	}
-	m, err = NewInfo(ci.EKS, time.Minute, zap.NewNop(), nodeCapacityCreatorOpt, awsSessionCreatorOpt)
+	m, err = NewInfo(awsutil.CreateDefaultSessionConfig(), ci.EKS, time.Minute, zap.NewNop(), nodeCapacityCreatorOpt, awsSessionCreatorOpt)
 	assert.Nil(t, m)
 	assert.Error(t, err)
 
@@ -103,7 +103,7 @@ func TestInfo(t *testing.T) {
 		}
 	}
 	ec2MetadataCreatorOpt := func(m *Info) {
-		m.ec2MetadataCreator = func(context.Context, *session.Session, time.Duration, chan bool, chan bool, *zap.Logger,
+		m.ec2MetadataCreator = func(context.Context, *session.Session, time.Duration, chan bool, chan bool, bool, int, *zap.Logger,
 			...ec2MetadataOption) ec2MetadataProvider {
 			return &mockEC2Metadata{}
 		}
@@ -120,7 +120,7 @@ func TestInfo(t *testing.T) {
 			return &mockEC2Tags{}
 		}
 	}
-	m, err = NewInfo(ci.EKS, time.Minute, zap.NewNop(), awsSessionCreatorOpt,
+	m, err = NewInfo(awsutil.CreateDefaultSessionConfig(), ci.EKS, time.Minute, zap.NewNop(), awsSessionCreatorOpt,
 		nodeCapacityCreatorOpt, ec2MetadataCreatorOpt, ebsVolumeCreatorOpt, ec2TagsCreatorOpt)
 	assert.NoError(t, err)
 	assert.NotNil(t, m)
@@ -142,6 +142,14 @@ func TestInfo(t *testing.T) {
 	assert.Equal(t, "ebs-volume-id", m.GetEBSVolumeID("dev"))
 	assert.Equal(t, "cluster-name", m.GetClusterName())
 	assert.Equal(t, "asg", m.GetAutoScalingGroupName())
+
+	// Test with cluster name override
+	m, err = NewInfo(awsutil.CreateDefaultSessionConfig(), ci.EKS, time.Minute, zap.NewNop(), awsSessionCreatorOpt,
+		nodeCapacityCreatorOpt, ec2MetadataCreatorOpt, ebsVolumeCreatorOpt, ec2TagsCreatorOpt, WithClusterName("override-cluster"))
+	assert.NoError(t, err)
+	assert.NotNil(t, m)
+
+	assert.Equal(t, "override-cluster", m.GetClusterName())
 }
 
 func TestInfoForECS(t *testing.T) {
@@ -151,7 +159,7 @@ func TestInfoForECS(t *testing.T) {
 			return nil, errors.New("error")
 		}
 	}
-	m, err := NewInfo(ci.ECS, time.Minute, zap.NewNop(), nodeCapacityCreatorOpt)
+	m, err := NewInfo(awsutil.CreateDefaultSessionConfig(), ci.ECS, time.Minute, zap.NewNop(), nodeCapacityCreatorOpt)
 	assert.Nil(t, m)
 	assert.Error(t, err)
 
@@ -166,7 +174,7 @@ func TestInfoForECS(t *testing.T) {
 			return nil, nil, errors.New("error")
 		}
 	}
-	m, err = NewInfo(ci.ECS, time.Minute, zap.NewNop(), nodeCapacityCreatorOpt, awsSessionCreatorOpt)
+	m, err = NewInfo(awsutil.CreateDefaultSessionConfig(), ci.ECS, time.Minute, zap.NewNop(), nodeCapacityCreatorOpt, awsSessionCreatorOpt)
 	assert.Nil(t, m)
 	assert.Error(t, err)
 
@@ -177,7 +185,7 @@ func TestInfoForECS(t *testing.T) {
 		}
 	}
 	ec2MetadataCreatorOpt := func(m *Info) {
-		m.ec2MetadataCreator = func(context.Context, *session.Session, time.Duration, chan bool, chan bool, *zap.Logger,
+		m.ec2MetadataCreator = func(context.Context, *session.Session, time.Duration, chan bool, chan bool, bool, int, *zap.Logger,
 			...ec2MetadataOption) ec2MetadataProvider {
 			return &mockEC2Metadata{}
 		}
@@ -194,7 +202,7 @@ func TestInfoForECS(t *testing.T) {
 			return &mockEC2Tags{}
 		}
 	}
-	m, err = NewInfo(ci.ECS, time.Minute, zap.NewNop(), awsSessionCreatorOpt,
+	m, err = NewInfo(awsutil.CreateDefaultSessionConfig(), ci.ECS, time.Minute, zap.NewNop(), awsSessionCreatorOpt,
 		nodeCapacityCreatorOpt, ec2MetadataCreatorOpt, ebsVolumeCreatorOpt, ec2TagsCreatorOpt)
 	assert.NoError(t, err)
 	assert.NotNil(t, m)

@@ -26,6 +26,11 @@ const (
 	errCodeThrottlingException = "ThrottlingException"
 )
 
+var (
+	containerInsightsRegexPattern       = regexp.MustCompile(`^/aws/.*containerinsights/.*/(performance|prometheus)$`)
+	enhancedContainerInsightsEKSPattern = regexp.MustCompile(`^/aws/containerinsights/\S+/performance$`)
+)
+
 // Possible exceptions are combination of common errors (https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/CommonErrors.html)
 // and API specific erros (e.g. https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_PutLogEvents.html#API_PutLogEvents_Errors)
 type Client struct {
@@ -33,6 +38,24 @@ type Client struct {
 	logRetention int64
 	tags         map[string]*string
 	logger       *zap.Logger
+}
+type UserAgentOption func(*UserAgentFlag)
+
+type UserAgentFlag struct {
+	isEnhancedContainerInsights bool
+	isAppSignals                bool
+}
+
+func WithEnabledContainerInsights(flag bool) UserAgentOption {
+	return func(ua *UserAgentFlag) {
+		ua.isEnhancedContainerInsights = flag
+	}
+}
+
+func WithEnabledAppSignals(flag bool) UserAgentOption {
+	return func(ua *UserAgentFlag) {
+		ua.isAppSignals = flag
+	}
 }
 
 // Create a log client based on the actual cloudwatch logs client.
@@ -45,11 +68,26 @@ func newCloudWatchLogClient(svc cloudwatchlogsiface.CloudWatchLogsAPI, logRetent
 }
 
 // NewClient create Client
-func NewClient(logger *zap.Logger, awsConfig *aws.Config, buildInfo component.BuildInfo, logGroupName string, logRetention int64, tags map[string]*string, sess *session.Session, componentName string) *Client {
+func NewClient(logger *zap.Logger, awsConfig *aws.Config, buildInfo component.BuildInfo, logGroupName string, logRetention int64, tags map[string]*string, sess *session.Session, opts ...UserAgentOption) *Client {
 	client := cloudwatchlogs.New(sess, awsConfig)
+	client.Handlers.Build.PushBackNamed(handler.NewRequestCompressionHandler([]string{"PutLogEvents"}, logger))
 	client.Handlers.Build.PushBackNamed(handler.RequestStructuredLogHandler)
-	client.Handlers.Build.PushFrontNamed(newCollectorUserAgentHandler(buildInfo, logGroupName, componentName))
+
+	// Loop through each option
+	option := &UserAgentFlag{
+		isEnhancedContainerInsights: false,
+		isAppSignals:                false,
+	}
+	for _, opt := range opts {
+		opt(option)
+	}
+
+	client.Handlers.Build.PushFrontNamed(newCollectorUserAgentHandler(buildInfo, logGroupName, option))
 	return newCloudWatchLogClient(client, logRetention, tags, logger)
+}
+
+func (client *Client) Handlers() *request.Handlers {
+	return &client.svc.(*cloudwatchlogs.CloudWatchLogs).Handlers
 }
 
 // PutLogEvents mainly handles different possible error could be returned from server side, and retries them
@@ -175,19 +213,22 @@ func (client *Client) CreateStream(logGroup, streamName *string) error {
 	return nil
 }
 
-func newCollectorUserAgentHandler(buildInfo component.BuildInfo, logGroupName string, componentName string) request.NamedHandler {
-	fn := request.MakeAddToUserAgentHandler(buildInfo.Command, buildInfo.Version, componentName)
-	if matchContainerInsightsPattern(logGroupName) {
-		fn = request.MakeAddToUserAgentHandler(buildInfo.Command, buildInfo.Version, componentName, "ContainerInsights")
+func newCollectorUserAgentHandler(buildInfo component.BuildInfo, logGroupName string, userAgentFlag *UserAgentFlag) request.NamedHandler {
+	extraStr := ""
+
+	switch {
+	case userAgentFlag.isEnhancedContainerInsights && enhancedContainerInsightsEKSPattern.MatchString(logGroupName):
+		extraStr = "EnhancedEKSContainerInsights"
+	case containerInsightsRegexPattern.MatchString(logGroupName):
+		extraStr = "ContainerInsights"
+	case userAgentFlag.isAppSignals:
+		extraStr = "AppSignals"
 	}
+
+	fn := request.MakeAddToUserAgentHandler(buildInfo.Command, buildInfo.Version, extraStr)
+
 	return request.NamedHandler{
 		Name: "otel.collector.UserAgentHandler",
 		Fn:   fn,
 	}
-}
-
-func matchContainerInsightsPattern(logGroupName string) bool {
-	regexP := "^/aws/.*containerinsights/.*/(performance|prometheus)$"
-	r, _ := regexp.Compile(regexP)
-	return r.MatchString(logGroupName)
 }

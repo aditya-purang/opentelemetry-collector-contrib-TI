@@ -4,7 +4,9 @@
 package awsemfexporter
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"sort"
 	"testing"
@@ -19,10 +21,17 @@ import (
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/cwlogs"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal/occonventions"
 )
 
+const defaultNumberOfTestMetrics = 3
+
 func createTestResourceMetrics() pmetric.ResourceMetrics {
+	return createTestResourceMetricsHelper(defaultNumberOfTestMetrics)
+}
+
+func createTestResourceMetricsHelper(numMetrics int) pmetric.ResourceMetrics {
 	rm := pmetric.NewResourceMetrics()
 	rm.Resource().Attributes().PutStr(occonventions.AttributeExporterVersion, "SomeVersion")
 	rm.Resource().Attributes().PutStr(conventions.AttributeServiceName, "myServiceName")
@@ -79,7 +88,7 @@ func createTestResourceMetrics() pmetric.ResourceMetrics {
 	q2.SetQuantile(1)
 	q2.SetValue(5)
 
-	for i := 0; i < 2; i++ {
+	for i := 1; i < numMetrics; i++ {
 		m = sm.Metrics().AppendEmpty()
 		m.SetName("spanCounter")
 		m.SetDescription("Counting all the spans")
@@ -268,6 +277,12 @@ func TestTranslateOtToGroupedMetric(t *testing.T) {
 	noNamespaceMetric.Resource().Attributes().Remove(conventions.AttributeServiceNamespace)
 	noNamespaceMetric.Resource().Attributes().Remove(conventions.AttributeServiceName)
 
+	// need to have 1 more metric than the default because the first is not going to be retained because it is a delta metric
+	containerInsightMetric := createTestResourceMetricsHelper(defaultNumberOfTestMetrics + 1)
+	containerInsightMetric.Resource().Attributes().PutStr(conventions.AttributeServiceName, "containerInsightsKubeAPIServerScraper")
+	gpuMetric := createTestResourceMetricsHelper(defaultNumberOfTestMetrics + 1)
+	gpuMetric.Resource().Attributes().PutStr(conventions.AttributeServiceName, "containerInsightsDCGMExporterScraper")
+
 	counterSumMetrics := map[string]*metricInfo{
 		"spanCounter": {
 			value: float64(1),
@@ -304,6 +319,7 @@ func TestTranslateOtToGroupedMetric(t *testing.T) {
 		counterLabels     map[string]string
 		timerLabels       map[string]string
 		expectedNamespace string
+		expectedReceiver  string
 	}{
 		{
 			"w/ instrumentation library and namespace",
@@ -318,6 +334,7 @@ func TestTranslateOtToGroupedMetric(t *testing.T) {
 				"spanName":            "testSpan",
 			},
 			"myServiceNS/myServiceName",
+			"prometheus",
 		},
 		{
 			"w/o instrumentation library, w/ namespace",
@@ -330,6 +347,7 @@ func TestTranslateOtToGroupedMetric(t *testing.T) {
 				"spanName": "testSpan",
 			},
 			"myServiceNS/myServiceName",
+			prometheusReceiver,
 		},
 		{
 			"w/o instrumentation library and namespace",
@@ -342,20 +360,57 @@ func TestTranslateOtToGroupedMetric(t *testing.T) {
 				"spanName": "testSpan",
 			},
 			defaultNamespace,
+			prometheusReceiver,
+		},
+		{
+			"container insights receiver",
+			containerInsightMetric,
+			map[string]string{
+				"isItAnError": "false",
+				"spanName":    "testSpan",
+			},
+			map[string]string{
+				oTellibDimensionKey: "cloudwatch-lib",
+				"spanName":          "testSpan",
+			},
+			"myServiceNS/containerInsightsKubeAPIServerScraper",
+			containerInsightsReceiver,
+		},
+		{
+			"dcgm receiver",
+			gpuMetric,
+			map[string]string{
+				"isItAnError": "false",
+				"spanName":    "testSpan",
+			},
+			map[string]string{
+				oTellibDimensionKey: "cloudwatch-lib",
+				"spanName":          "testSpan",
+			},
+			"myServiceNS/containerInsightsDCGMExporterScraper",
+			containerInsightsReceiver,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.testName, func(t *testing.T) {
-
 			groupedMetrics := make(map[any]*groupedMetric)
 			err := translator.translateOTelToGroupedMetric(tc.metric, groupedMetrics, config)
 			assert.NoError(t, err)
 			assert.NotNil(t, groupedMetrics)
-			assert.Equal(t, 3, len(groupedMetrics))
+			assert.Equal(t, defaultNumberOfTestMetrics, len(groupedMetrics))
 
 			for _, v := range groupedMetrics {
 				assert.Equal(t, tc.expectedNamespace, v.metadata.namespace)
+				assert.Equal(t, tc.expectedReceiver, v.metadata.receiver)
+
+				for _, metric := range v.metrics {
+					if mv, ok := metric.value.(float64); ok {
+						// round the metrics, the floats can get off by a very small amount
+						metric.value = math.Round(mv*100000) / 100000
+					}
+				}
+
 				switch {
 				case v.metadata.metricDataType == pmetric.MetricTypeSum:
 					assert.Equal(t, 2, len(v.metrics))
@@ -389,9 +444,10 @@ func TestTranslateOtToGroupedMetric(t *testing.T) {
 
 func TestTranslateCWMetricToEMF(t *testing.T) {
 	testCases := map[string]struct {
-		emfVersion          string
-		measurements        []cWMeasurement
-		expectedEMFLogEvent string
+		emfVersion              string
+		measurements            []cWMeasurement
+		disableMetricExtraction bool
+		expectedEMFLogEvent     string
 	}{
 		"WithMeasurementAndEMFV1": {
 			emfVersion: "1",
@@ -403,7 +459,8 @@ func TestTranslateCWMetricToEMF(t *testing.T) {
 					"Unit": "Count",
 				}},
 			}},
-			expectedEMFLogEvent: "{\"OTelLib\":\"cloudwatch-otel\",\"Sources\":[\"cadvisor\",\"pod\",\"calculated\"],\"Version\":\"1\",\"_aws\":{\"CloudWatchMetrics\":[{\"Namespace\":\"test-emf\",\"Dimensions\":[[\"OTelLib\"],[\"OTelLib\",\"spanName\"]],\"Metrics\":[{\"Name\":\"spanCounter\",\"Unit\":\"Count\"}]}],\"Timestamp\":1596151098037},\"kubernetes\":{\"container_name\":\"cloudwatch-agent\",\"docker\":{\"container_id\":\"fc1b0a4c3faaa1808e187486a3a90cbea883dccaf2e2c46d4069d663b032a1ca\"},\"host\":\"ip-192-168-58-245.ec2.internal\",\"labels\":{\"controller-revision-hash\":\"5bdbf497dc\",\"name\":\"cloudwatch-agent\",\"pod-template-generation\":\"1\"},\"namespace_name\":\"amazon-cloudwatch\",\"pod_id\":\"e23f3413-af2e-4a98-89e0-5df2251e7f05\",\"pod_name\":\"cloudwatch-agent-26bl6\",\"pod_owners\":[{\"owner_kind\":\"DaemonSet\",\"owner_name\":\"cloudwatch-agent\"}]},\"spanCounter\":0,\"spanName\":\"test\"}",
+			disableMetricExtraction: false,
+			expectedEMFLogEvent:     "{\"OTelLib\":\"cloudwatch-otel\",\"Sources\":[\"cadvisor\",\"pod\",\"calculated\"],\"Version\":\"1\",\"_aws\":{\"CloudWatchMetrics\":[{\"Namespace\":\"test-emf\",\"Dimensions\":[[\"OTelLib\"],[\"OTelLib\",\"spanName\"]],\"Metrics\":[{\"Name\":\"spanCounter\",\"Unit\":\"Count\"}]}],\"Timestamp\":1596151098037},\"kubernetes\":{\"container_name\":\"cloudwatch-agent\",\"docker\":{\"container_id\":\"fc1b0a4c3faaa1808e187486a3a90cbea883dccaf2e2c46d4069d663b032a1ca\"},\"host\":\"ip-192-168-58-245.ec2.internal\",\"labels\":{\"controller-revision-hash\":\"5bdbf497dc\",\"name\":\"cloudwatch-agent\",\"pod-template-generation\":\"1\"},\"namespace_name\":\"amazon-cloudwatch\",\"pod_id\":\"e23f3413-af2e-4a98-89e0-5df2251e7f05\",\"pod_name\":\"cloudwatch-agent-26bl6\",\"pod_owners\":[{\"owner_kind\":\"DaemonSet\",\"owner_name\":\"cloudwatch-agent\"}]},\"spanName\":\"test\",\"spanCounter\":0}",
 		},
 		"WithMeasurementAndEMFV0": {
 			emfVersion: "0",
@@ -415,17 +472,33 @@ func TestTranslateCWMetricToEMF(t *testing.T) {
 					"Unit": "Count",
 				}},
 			}},
-			expectedEMFLogEvent: "{\"CloudWatchMetrics\":[{\"Namespace\":\"test-emf\",\"Dimensions\":[[\"OTelLib\"],[\"OTelLib\",\"spanName\"]],\"Metrics\":[{\"Name\":\"spanCounter\",\"Unit\":\"Count\"}]}],\"OTelLib\":\"cloudwatch-otel\",\"Sources\":[\"cadvisor\",\"pod\",\"calculated\"],\"Timestamp\":\"1596151098037\",\"Version\":\"0\",\"kubernetes\":{\"container_name\":\"cloudwatch-agent\",\"docker\":{\"container_id\":\"fc1b0a4c3faaa1808e187486a3a90cbea883dccaf2e2c46d4069d663b032a1ca\"},\"host\":\"ip-192-168-58-245.ec2.internal\",\"labels\":{\"controller-revision-hash\":\"5bdbf497dc\",\"name\":\"cloudwatch-agent\",\"pod-template-generation\":\"1\"},\"namespace_name\":\"amazon-cloudwatch\",\"pod_id\":\"e23f3413-af2e-4a98-89e0-5df2251e7f05\",\"pod_name\":\"cloudwatch-agent-26bl6\",\"pod_owners\":[{\"owner_kind\":\"DaemonSet\",\"owner_name\":\"cloudwatch-agent\"}]},\"spanCounter\":0,\"spanName\":\"test\"}",
+			disableMetricExtraction: false,
+			expectedEMFLogEvent:     "{\"CloudWatchMetrics\":[{\"Namespace\":\"test-emf\",\"Dimensions\":[[\"OTelLib\"],[\"OTelLib\",\"spanName\"]],\"Metrics\":[{\"Name\":\"spanCounter\",\"Unit\":\"Count\"}]}],\"OTelLib\":\"cloudwatch-otel\",\"Sources\":[\"cadvisor\",\"pod\",\"calculated\"],\"Timestamp\":\"1596151098037\",\"Version\":\"0\",\"kubernetes\":{\"container_name\":\"cloudwatch-agent\",\"docker\":{\"container_id\":\"fc1b0a4c3faaa1808e187486a3a90cbea883dccaf2e2c46d4069d663b032a1ca\"},\"host\":\"ip-192-168-58-245.ec2.internal\",\"labels\":{\"controller-revision-hash\":\"5bdbf497dc\",\"name\":\"cloudwatch-agent\",\"pod-template-generation\":\"1\"},\"namespace_name\":\"amazon-cloudwatch\",\"pod_id\":\"e23f3413-af2e-4a98-89e0-5df2251e7f05\",\"pod_name\":\"cloudwatch-agent-26bl6\",\"pod_owners\":[{\"owner_kind\":\"DaemonSet\",\"owner_name\":\"cloudwatch-agent\"}]},\"spanName\":\"test\",\"spanCounter\":0}",
 		},
-		"WithNoMeasurementAndEMFV1": {
-			emfVersion:          "1",
-			measurements:        nil,
-			expectedEMFLogEvent: "{\"OTelLib\":\"cloudwatch-otel\",\"Sources\":[\"cadvisor\",\"pod\",\"calculated\"],\"kubernetes\":{\"container_name\":\"cloudwatch-agent\",\"docker\":{\"container_id\":\"fc1b0a4c3faaa1808e187486a3a90cbea883dccaf2e2c46d4069d663b032a1ca\"},\"host\":\"ip-192-168-58-245.ec2.internal\",\"labels\":{\"controller-revision-hash\":\"5bdbf497dc\",\"name\":\"cloudwatch-agent\",\"pod-template-generation\":\"1\"},\"namespace_name\":\"amazon-cloudwatch\",\"pod_id\":\"e23f3413-af2e-4a98-89e0-5df2251e7f05\",\"pod_name\":\"cloudwatch-agent-26bl6\",\"pod_owners\":[{\"owner_kind\":\"DaemonSet\",\"owner_name\":\"cloudwatch-agent\"}]},\"spanCounter\":0,\"spanName\":\"test\"}",
+		"WithNoMeasurement": {
+			emfVersion:              "1",
+			measurements:            nil,
+			disableMetricExtraction: false,
+			expectedEMFLogEvent:     "{\"OTelLib\":\"cloudwatch-otel\",\"Sources\":[\"cadvisor\",\"pod\",\"calculated\"],\"kubernetes\":{\"container_name\":\"cloudwatch-agent\",\"docker\":{\"container_id\":\"fc1b0a4c3faaa1808e187486a3a90cbea883dccaf2e2c46d4069d663b032a1ca\"},\"host\":\"ip-192-168-58-245.ec2.internal\",\"labels\":{\"controller-revision-hash\":\"5bdbf497dc\",\"name\":\"cloudwatch-agent\",\"pod-template-generation\":\"1\"},\"namespace_name\":\"amazon-cloudwatch\",\"pod_id\":\"e23f3413-af2e-4a98-89e0-5df2251e7f05\",\"pod_name\":\"cloudwatch-agent-26bl6\",\"pod_owners\":[{\"owner_kind\":\"DaemonSet\",\"owner_name\":\"cloudwatch-agent\"}]},\"spanCounter\":0,\"spanName\":\"test\"}",
 		},
 		"WithNoMeasurementAndEMFV0": {
-			emfVersion:          "0",
-			measurements:        nil,
-			expectedEMFLogEvent: "{\"OTelLib\":\"cloudwatch-otel\",\"Sources\":[\"cadvisor\",\"pod\",\"calculated\"],\"Timestamp\":\"1596151098037\",\"kubernetes\":{\"container_name\":\"cloudwatch-agent\",\"docker\":{\"container_id\":\"fc1b0a4c3faaa1808e187486a3a90cbea883dccaf2e2c46d4069d663b032a1ca\"},\"host\":\"ip-192-168-58-245.ec2.internal\",\"labels\":{\"controller-revision-hash\":\"5bdbf497dc\",\"name\":\"cloudwatch-agent\",\"pod-template-generation\":\"1\"},\"namespace_name\":\"amazon-cloudwatch\",\"pod_id\":\"e23f3413-af2e-4a98-89e0-5df2251e7f05\",\"pod_name\":\"cloudwatch-agent-26bl6\",\"pod_owners\":[{\"owner_kind\":\"DaemonSet\",\"owner_name\":\"cloudwatch-agent\"}]},\"spanCounter\":0,\"spanName\":\"test\"}",
+			emfVersion:              "0",
+			measurements:            nil,
+			disableMetricExtraction: false,
+			expectedEMFLogEvent:     "{\"OTelLib\":\"cloudwatch-otel\",\"Sources\":[\"cadvisor\",\"pod\",\"calculated\"],\"Timestamp\":\"1596151098037\",\"Version\":\"0\",\"kubernetes\":{\"container_name\":\"cloudwatch-agent\",\"docker\":{\"container_id\":\"fc1b0a4c3faaa1808e187486a3a90cbea883dccaf2e2c46d4069d663b032a1ca\"},\"host\":\"ip-192-168-58-245.ec2.internal\",\"labels\":{\"controller-revision-hash\":\"5bdbf497dc\",\"name\":\"cloudwatch-agent\",\"pod-template-generation\":\"1\"},\"namespace_name\":\"amazon-cloudwatch\",\"pod_id\":\"e23f3413-af2e-4a98-89e0-5df2251e7f05\",\"pod_name\":\"cloudwatch-agent-26bl6\",\"pod_owners\":[{\"owner_kind\":\"DaemonSet\",\"owner_name\":\"cloudwatch-agent\"}]},\"spanCounter\":0,\"spanName\":\"test\"}",
+		},
+		"WithMeasurementAndDisableMetricExtraction": {
+			emfVersion: "1",
+			measurements: []cWMeasurement{{
+				Namespace:  "test-emf",
+				Dimensions: [][]string{{oTellibDimensionKey}, {oTellibDimensionKey, "spanName"}},
+				Metrics: []map[string]string{{
+					"Name": "spanCounter",
+					"Unit": "Count",
+				}},
+			}},
+			disableMetricExtraction: true,
+			expectedEMFLogEvent:     "{\"OTelLib\":\"cloudwatch-otel\",\"Sources\":[\"cadvisor\",\"pod\",\"calculated\"],\"kubernetes\":{\"container_name\":\"cloudwatch-agent\",\"docker\":{\"container_id\":\"fc1b0a4c3faaa1808e187486a3a90cbea883dccaf2e2c46d4069d663b032a1ca\"},\"host\":\"ip-192-168-58-245.ec2.internal\",\"labels\":{\"controller-revision-hash\":\"5bdbf497dc\",\"name\":\"cloudwatch-agent\",\"pod-template-generation\":\"1\"},\"namespace_name\":\"amazon-cloudwatch\",\"pod_id\":\"e23f3413-af2e-4a98-89e0-5df2251e7f05\",\"pod_name\":\"cloudwatch-agent-26bl6\",\"pod_owners\":[{\"owner_kind\":\"DaemonSet\",\"owner_name\":\"cloudwatch-agent\"}]},\"spanName\":\"test\",\"spanCounter\":0}",
 		},
 	}
 
@@ -436,6 +509,7 @@ func TestTranslateCWMetricToEMF(t *testing.T) {
 				// include valid json string, a non-existing key, and keys whose value are not json/string
 				ParseJSONEncodedAttributeValues: []string{"kubernetes", "Sources", "NonExistingAttributeKey", "spanName", "spanCounter"},
 				Version:                         tc.emfVersion,
+				DisableMetricExtraction:         tc.disableMetricExtraction,
 				logger:                          zap.NewNop(),
 			}
 
@@ -459,17 +533,108 @@ func TestTranslateCWMetricToEMF(t *testing.T) {
 			assert.Equal(t, tc.expectedEMFLogEvent, *emfLogEvent.InputLogEvent.Message)
 		})
 	}
+}
 
+func TestTranslateCWMetricToEMFForEnhancedContainerInsights(t *testing.T) {
+	testCases := map[string]struct {
+		EnhancedContainerInsights bool
+		fields                    map[string]any
+		measurements              []cWMeasurement
+		expectedEMFLogEvent       any
+	}{
+		"EnhancedContainerInsightsEnabled": {
+			EnhancedContainerInsights: true,
+			fields: map[string]any{
+				oTellibDimensionKey:                     "cloudwatch-otel",
+				"scrape_samples_post_metric_relabeling": "12",
+				"scrape_samples_scraped":                "34",
+				"scrape_series_added":                   "56",
+				"service.instance.id":                   "1.2.3.4:443",
+				"Sources":                               "[\"apiserver\"]",
+			},
+			measurements:        nil,
+			expectedEMFLogEvent: nil,
+		},
+		"EnhancedContainerInsightsDisabled": {
+			EnhancedContainerInsights: false,
+			fields: map[string]any{
+				oTellibDimensionKey:                     "cloudwatch-otel",
+				"scrape_samples_post_metric_relabeling": "12",
+				"scrape_samples_scraped":                "34",
+				"scrape_series_added":                   "56",
+				"service.instance.id":                   "1.2.3.4:443",
+				"Sources":                               "[\"apiserver\"]",
+			},
+			measurements:        nil,
+			expectedEMFLogEvent: "{\"OTelLib\":\"cloudwatch-otel\",\"Sources\":[\"apiserver\"],\"scrape_samples_post_metric_relabeling\":\"12\",\"scrape_samples_scraped\":\"34\",\"scrape_series_added\":\"56\",\"service.instance.id\":\"1.2.3.4:443\"}",
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(_ *testing.T) {
+			config := &Config{
+				// include valid json string, a non-existing key, and keys whose value are not json/string
+				ParseJSONEncodedAttributeValues: []string{"Sources"},
+				EnhancedContainerInsights:       tc.EnhancedContainerInsights,
+				logger:                          zap.NewNop(),
+			}
+
+			cloudwatchMetric := &cWMetrics{
+				timestampMs:  int64(1596151098037),
+				fields:       tc.fields,
+				measurements: tc.measurements,
+			}
+
+			emfLogEvent, err := translateCWMetricToEMF(cloudwatchMetric, config)
+			require.NoError(t, err)
+
+			if tc.expectedEMFLogEvent != nil {
+				assert.Equal(t, tc.expectedEMFLogEvent, *emfLogEvent.InputLogEvent.Message)
+			}
+		})
+	}
+
+}
+
+func TestTranslateGroupedMetricToEmfForEnhancedContainerInsights(t *testing.T) {
+	tests := map[string]struct {
+		groupedMetric    *groupedMetric
+		config           *Config
+		defaultLogStream string
+		want             *cwlogs.Event
+		expectedErr      error
+	}{
+		"EnhancedContainerInsightsEnabledNoMetrics": {
+			groupedMetric:    &groupedMetric{},
+			config:           &Config{EnhancedContainerInsights: true, DisableMetricExtraction: true},
+			defaultLogStream: "",
+			want:             nil,
+			expectedErr:      errMissingMetricsForEnhancedContainerInsights,
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, err := translateGroupedMetricToEmf(tt.groupedMetric, tt.config, tt.defaultLogStream)
+			if err != nil && !errors.Is(err, tt.expectedErr) {
+				t.Errorf("translateGroupedMetricToEmf() error = %v, expectedErr %v", err, tt.expectedErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("translateGroupedMetricToEmf() got = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestTranslateGroupedMetricToCWMetric(t *testing.T) {
 	timestamp := int64(1596151098037)
 	namespace := "Namespace"
 	testCases := []struct {
-		testName           string
-		groupedMetric      *groupedMetric
-		metricDeclarations []*MetricDeclaration
-		expectedCWMetric   *cWMetrics
+		testName                string
+		groupedMetric           *groupedMetric
+		metricDeclarations      []*MetricDeclaration
+		disableMetricExtraction bool
+		expectedCWMetric        *cWMetrics
 	}{
 		{
 			"single metric w/o metric declarations",
@@ -491,6 +656,7 @@ func TestTranslateGroupedMetricToCWMetric(t *testing.T) {
 				},
 			},
 			nil,
+			false,
 			&cWMetrics{
 				measurements: []cWMeasurement{
 					{
@@ -536,6 +702,7 @@ func TestTranslateGroupedMetricToCWMetric(t *testing.T) {
 					MetricNameSelectors: []string{"metric.*"},
 				},
 			},
+			false,
 			&cWMetrics{
 				measurements: []cWMeasurement{
 					{
@@ -585,6 +752,7 @@ func TestTranslateGroupedMetricToCWMetric(t *testing.T) {
 				},
 			},
 			nil,
+			false,
 			&cWMetrics{
 				measurements: []cWMeasurement{
 					{
@@ -660,6 +828,7 @@ func TestTranslateGroupedMetricToCWMetric(t *testing.T) {
 					MetricNameSelectors: []string{"metric2"},
 				},
 			},
+			false,
 			&cWMetrics{
 				measurements: []cWMeasurement{
 					{
@@ -708,6 +877,7 @@ func TestTranslateGroupedMetricToCWMetric(t *testing.T) {
 				},
 			},
 			nil,
+			false,
 			&cWMetrics{
 				measurements: []cWMeasurement{
 					{
@@ -744,6 +914,7 @@ func TestTranslateGroupedMetricToCWMetric(t *testing.T) {
 				},
 			},
 			nil,
+			false,
 			&cWMetrics{
 				measurements: []cWMeasurement{
 					{
@@ -765,6 +936,36 @@ func TestTranslateGroupedMetricToCWMetric(t *testing.T) {
 				},
 			},
 		},
+		{
+			"single metric w/ disable_metric_extraction",
+			&groupedMetric{
+				labels: map[string]string{
+					"label1": "value1",
+				},
+				metrics: map[string]*metricInfo{
+					"metric1": {
+						value: 1,
+						unit:  "Count",
+					},
+				},
+				metadata: cWMetricMetadata{
+					groupedMetricMetadata: groupedMetricMetadata{
+						namespace:   namespace,
+						timestampMs: timestamp,
+					},
+				},
+			},
+			nil,
+			true,
+			&cWMetrics{
+				measurements: []cWMeasurement{},
+				timestampMs:  timestamp,
+				fields: map[string]any{
+					"label1":  "value1",
+					"metric1": 1,
+				},
+			},
+		},
 	}
 
 	logger := zap.NewNop()
@@ -772,9 +973,10 @@ func TestTranslateGroupedMetricToCWMetric(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.testName, func(t *testing.T) {
 			config := &Config{
-				MetricDeclarations:    tc.metricDeclarations,
-				DimensionRollupOption: "",
-				logger:                logger,
+				MetricDeclarations:      tc.metricDeclarations,
+				DimensionRollupOption:   "",
+				DisableMetricExtraction: tc.disableMetricExtraction,
+				logger:                  logger,
 			}
 			for _, decl := range tc.metricDeclarations {
 				err := decl.init(logger)

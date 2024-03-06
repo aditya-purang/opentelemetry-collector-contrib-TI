@@ -6,15 +6,19 @@ package awsutil // import "github.com/open-telemetry/opentelemetry-collector-con
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"net/http"
 	"net/url"
 	"os"
 	"time"
 
+	override "github.com/amazon-contributing/opentelemetry-collector-contrib/override/aws"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/credentials/ec2rolecreds"
 	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/ec2metadata"
 	"github.com/aws/aws-sdk-go/aws/endpoints"
@@ -25,15 +29,51 @@ import (
 )
 
 type ConnAttr interface {
-	newAWSSession(logger *zap.Logger, roleArn string, region string) (*session.Session, error)
-	getEC2Region(s *session.Session) (string, error)
+	newAWSSession(logger *zap.Logger, cfg *AWSSessionSettings, region string) (*session.Session, error)
+	getEC2Region(s *session.Session, imdsRetries int) (string, error)
 }
 
 // Conn implements connAttr interface.
 type Conn struct{}
 
-func (c *Conn) getEC2Region(s *session.Session) (string, error) {
-	return ec2metadata.New(s).Region()
+type stsCredentialProvider struct {
+	regional, partitional, fallbackProvider *stscreds.AssumeRoleProvider
+}
+
+func (s *stsCredentialProvider) IsExpired() bool {
+	if s.fallbackProvider != nil {
+		return s.fallbackProvider.IsExpired()
+	}
+	return s.regional.IsExpired()
+}
+
+func (s *stsCredentialProvider) Retrieve() (credentials.Value, error) {
+	if s.fallbackProvider != nil {
+		return s.fallbackProvider.Retrieve()
+	}
+
+	v, err := s.regional.Retrieve()
+
+	if err != nil {
+		var aerr awserr.Error
+		if errors.As(err, &aerr) && aerr.Code() == sts.ErrCodeRegionDisabledException {
+			s.fallbackProvider = s.partitional
+			return s.partitional.Retrieve()
+		}
+	}
+
+	return v, err
+}
+
+func (c *Conn) getEC2Region(s *session.Session, imdsRetries int) (string, error) {
+	region, err := ec2metadata.New(s, &aws.Config{
+		Retryer:                   override.NewIMDSRetryer(imdsRetries),
+		EC2MetadataEnableFallback: aws.Bool(false),
+	}).Region()
+	if err == nil {
+		return region, err
+	}
+	return ec2metadata.New(s, &aws.Config{}).Region()
 }
 
 // AWS STS endpoint constants
@@ -41,15 +81,29 @@ const (
 	STSEndpointPrefix         = "https://sts."
 	STSEndpointSuffix         = ".amazonaws.com"
 	STSAwsCnPartitionIDSuffix = ".amazonaws.com.cn" // AWS China partition.
+	bjsPartition              = "aws-cn"
+	pdtPartition              = "aws-us-gov"
+	lckPartition              = "aws-iso-b"
+	dcaPartition              = "aws-iso"
+	classicFallbackRegion     = "us-east-1"
+	bjsFallbackRegion         = "cn-north-1"
+	pdtFallbackRegion         = "us-gov-west-1"
+	lckFallbackRegion         = "us-isob-east-1"
+	dcaFallbackRegion         = "us-iso-east-1"
 )
 
 // newHTTPClient returns new HTTP client instance with provided configuration.
 func newHTTPClient(logger *zap.Logger, maxIdle int, requestTimeout int, noVerify bool,
-	proxyAddress string) (*http.Client, error) {
+	proxyAddress string, certificateFilePath string) (*http.Client, error) {
 	logger.Debug("Using proxy address: ",
 		zap.String("proxyAddr", proxyAddress),
 	)
-	tls := &tls.Config{
+	rootCA, certPoolError := loadCertPool(certificateFilePath)
+	if certificateFilePath != "" && certPoolError != nil {
+		logger.Warn("could not create root ca from", zap.String("file", certificateFilePath), zap.Error(certPoolError))
+	}
+	tlsConfig := &tls.Config{
+		RootCAs:            rootCA,
 		InsecureSkipVerify: noVerify,
 	}
 
@@ -61,7 +115,7 @@ func newHTTPClient(logger *zap.Logger, maxIdle int, requestTimeout int, noVerify
 	}
 	transport := &http.Transport{
 		MaxIdleConnsPerHost: maxIdle,
-		TLSClientConfig:     tls,
+		TLSClientConfig:     tlsConfig,
 		Proxy:               http.ProxyURL(proxyURL),
 	}
 
@@ -77,6 +131,20 @@ func newHTTPClient(logger *zap.Logger, maxIdle int, requestTimeout int, noVerify
 		Timeout:   time.Second * time.Duration(requestTimeout),
 	}
 	return http, err
+}
+
+func loadCertPool(bundleFile string) (*x509.CertPool, error) {
+	bundleBytes, err := os.ReadFile(bundleFile)
+	if err != nil {
+		return nil, err
+	}
+
+	p := x509.NewCertPool()
+	if !p.AppendCertsFromPEM(bundleBytes) {
+		return nil, errors.New("unable to append certs")
+	}
+
+	return p, nil
 }
 
 func getProxyAddress(proxyAddress string) string {
@@ -110,7 +178,7 @@ func GetAWSConfigSession(logger *zap.Logger, cn ConnAttr, cfg *AWSSessionSetting
 	var s *session.Session
 	var err error
 	var awsRegion string
-	http, err := newHTTPClient(logger, cfg.NumberOfWorkers, cfg.RequestTimeoutSeconds, cfg.NoVerifySSL, cfg.ProxyAddress)
+	http, err := newHTTPClient(logger, cfg.NumberOfWorkers, cfg.RequestTimeoutSeconds, cfg.NoVerifySSL, cfg.ProxyAddress, cfg.CertificateFilePath)
 	if err != nil {
 		logger.Error("unable to obtain proxy URL", zap.Error(err))
 		return nil, nil, err
@@ -124,13 +192,13 @@ func GetAWSConfigSession(logger *zap.Logger, cn ConnAttr, cfg *AWSSessionSetting
 	case cfg.Region != "":
 		awsRegion = cfg.Region
 		logger.Debug("Fetch region from commandline/config file", zap.String("region", awsRegion))
-	case !cfg.NoVerifySSL:
+	case !cfg.LocalMode:
 		var es *session.Session
-		es, err = GetDefaultSession(logger)
+		es, err = GetDefaultSession(logger, cfg)
 		if err != nil {
 			logger.Error("Unable to retrieve default session", zap.Error(err))
 		} else {
-			awsRegion, err = cn.getEC2Region(es)
+			awsRegion, err = cn.getEC2Region(es, cfg.IMDSRetries)
 			if err != nil {
 				logger.Error("Unable to retrieve the region from the EC2 instance", zap.Error(err))
 			} else {
@@ -145,17 +213,18 @@ func GetAWSConfigSession(logger *zap.Logger, cn ConnAttr, cfg *AWSSessionSetting
 		logger.Error(msg)
 		return nil, nil, awserr.New("NoAwsRegion", msg, nil)
 	}
-	s, err = cn.newAWSSession(logger, cfg.RoleARN, awsRegion)
+	s, err = cn.newAWSSession(logger, cfg, awsRegion)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	config := &aws.Config{
-		Region:                 aws.String(awsRegion),
-		DisableParamValidation: aws.Bool(true),
-		MaxRetries:             aws.Int(cfg.MaxRetries),
-		Endpoint:               aws.String(cfg.Endpoint),
-		HTTPClient:             http,
+		Region:                        aws.String(awsRegion),
+		DisableParamValidation:        aws.Bool(true),
+		MaxRetries:                    aws.Int(cfg.MaxRetries),
+		Endpoint:                      aws.String(cfg.Endpoint),
+		HTTPClient:                    http,
+		CredentialsChainVerboseErrors: aws.Bool(true),
 	}
 	return config, s, nil
 }
@@ -193,16 +262,21 @@ func ProxyServerTransport(logger *zap.Logger, config *AWSSessionSettings) (*http
 	return transport, nil
 }
 
-func (c *Conn) newAWSSession(logger *zap.Logger, roleArn string, region string) (*session.Session, error) {
+func (c *Conn) newAWSSession(logger *zap.Logger, cfg *AWSSessionSettings, region string) (*session.Session, error) {
 	var s *session.Session
 	var err error
-	if roleArn == "" {
-		s, err = GetDefaultSession(logger)
+	if cfg.RoleARN == "" {
+		s, err = GetDefaultSession(logger, cfg)
 		if err != nil {
 			return s, err
 		}
 	} else {
-		stsCreds, _ := getSTSCreds(logger, region, roleArn)
+		s, err = GetDefaultSession(logger, cfg)
+		if err != nil {
+			logger.Warn("could not get default session before trying to get role sts", zap.Error(err))
+			return nil, err
+		}
+		stsCreds := newStsCredentials(s, cfg.RoleARN, region)
 
 		s, err = session.NewSession(&aws.Config{
 			Credentials: stsCreds,
@@ -219,13 +293,13 @@ func (c *Conn) newAWSSession(logger *zap.Logger, roleArn string, region string) 
 // getSTSCreds gets STS credentials from regional endpoint. ErrCodeRegionDisabledException is received if the
 // STS regional endpoint is disabled. In this case STS credentials are fetched from STS primary regional endpoint
 // in the respective AWS partition.
-func getSTSCreds(logger *zap.Logger, region string, roleArn string) (*credentials.Credentials, error) {
-	t, err := GetDefaultSession(logger)
+func getSTSCreds(logger *zap.Logger, region string, cfg *AWSSessionSettings) (*credentials.Credentials, error) {
+	t, err := GetDefaultSession(logger, cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	stsCred := getSTSCredsFromRegionEndpoint(logger, t, region, roleArn)
+	stsCred := getSTSCredsFromRegionEndpoint(logger, t, region, cfg.RoleARN)
 	// Make explicit call to fetch credentials.
 	_, err = stsCred.Get()
 	if err != nil {
@@ -235,7 +309,7 @@ func getSTSCreds(logger *zap.Logger, region string, roleArn string) (*credential
 
 			if awsErr.Code() == sts.ErrCodeRegionDisabledException {
 				logger.Error("Region ", zap.String("region", region), zap.Error(awsErr))
-				stsCred = getSTSCredsFromPrimaryRegionEndpoint(logger, t, roleArn, region)
+				stsCred = getSTSCredsFromPrimaryRegionEndpoint(logger, t, cfg.RoleARN, region)
 			}
 		}
 	}
@@ -287,17 +361,151 @@ func getSTSRegionalEndpoint(r string) string {
 	return e
 }
 
-func GetDefaultSession(logger *zap.Logger) (*session.Session, error) {
-	result, serr := session.NewSession()
-	if serr != nil {
-		logger.Error("Error in creating session object ", zap.Error(serr))
-		return result, serr
+func GetDefaultSession(logger *zap.Logger, cfg *AWSSessionSettings) (*session.Session, error) {
+	cfgFiles := getFallbackSharedConfigFiles(backwardsCompatibleUserHomeDir)
+	logger.Debug("Fallback shared config file(s)", zap.Strings("files", cfgFiles))
+	awsConfig := aws.Config{
+		Credentials: getRootCredentials(cfg),
 	}
-	return result, nil
+	result, serr := session.NewSessionWithOptions(session.Options{
+		Config:            awsConfig,
+		SharedConfigFiles: cfgFiles,
+	})
+	if serr != nil {
+		logger.Error("Error in creating session object waiting 15 seconds", zap.Error(serr))
+		time.Sleep(15 * time.Second)
+		result, serr = session.NewSessionWithOptions(session.Options{
+			Config:            awsConfig,
+			SharedConfigFiles: cfgFiles,
+		})
+		if serr != nil {
+			logger.Error("Retry failed for creating credential sessions", zap.Error(serr))
+			return result, serr
+		}
+	}
+	cred, err := result.Config.Credentials.Get()
+	if err != nil {
+		logger.Error("Failed to get credential from session", zap.Error(err))
+	} else {
+		logger.Debug("Using credential from session", zap.String("access-key", cred.AccessKeyID), zap.String("provider", cred.ProviderName))
+	}
+	if cred.ProviderName == ec2rolecreds.ProviderName {
+		var found []string
+		cfgFiles = getFallbackSharedConfigFiles(currentUserHomeDir)
+		for _, cfgFile := range cfgFiles {
+			if _, err = os.Stat(cfgFile); err == nil {
+				found = append(found, cfgFile)
+			}
+		}
+		if len(found) > 0 {
+			logger.Warn("Unused shared config file(s) found.", zap.Strings("files", found))
+		}
+	}
+	return result, serr
+}
+
+func getRootCredentials(cfg *AWSSessionSettings) *credentials.Credentials {
+	credentialProviderChain := getCredentialProviderChain(cfg)
+	for i := 0; i < len(credentialProviderChain); i++ {
+		if credentialProviderChain[i] != nil {
+			return credentials.NewCredentials(credentialProviderChain[i])
+		}
+	}
+	return nil
 }
 
 // getPartition return AWS Partition for the provided region.
 func getPartition(region string) string {
 	p, _ := endpoints.PartitionForRegion(endpoints.DefaultPartitions(), region)
 	return p.ID()
+}
+
+// order
+// 1. override creds providers
+// 2. shared creds file
+// 3. shared profile
+// explicit keys do not make sense in this context since contrib does not take in explicit keys
+// and cwa does not provide explicit keys to config but come from these methods of getting creds
+// @TODO make this more upstream friendly working in the future
+func getCredentialProviderChain(cfg *AWSSessionSettings) []credentials.Provider {
+	overrideCredProviders := override.GetCredentialsChainOverride().GetCredentialsChain()
+	var credProviders []credentials.Provider
+	for _, provider := range overrideCredProviders {
+		for _, file := range cfg.SharedCredentialsFile {
+			credProviders = append(credProviders, provider(file))
+		}
+	}
+	if cfg.Profile != "" || len(cfg.SharedCredentialsFile) > 0 {
+		if len(cfg.SharedCredentialsFile) == 0 {
+			credProviders = append(credProviders, &RefreshableSharedCredentialsProvider{
+				sharedCredentialsProvider: &credentials.SharedCredentialsProvider{
+					Filename: "",
+					Profile:  cfg.Profile,
+				},
+			})
+		}
+		for _, file := range cfg.SharedCredentialsFile {
+			credProviders = append(credProviders, &RefreshableSharedCredentialsProvider{
+				sharedCredentialsProvider: &credentials.SharedCredentialsProvider{
+					Filename: file,
+					Profile:  cfg.Profile,
+				},
+			})
+		}
+	}
+	return credProviders
+}
+
+func newStsCredentials(c client.ConfigProvider, roleARN string, region string) *credentials.Credentials {
+	regional := &stscreds.AssumeRoleProvider{
+		Client: sts.New(c, &aws.Config{
+			Region:              aws.String(region),
+			STSRegionalEndpoint: endpoints.RegionalSTSEndpoint,
+			HTTPClient:          &http.Client{Timeout: 1 * time.Minute},
+		}),
+		RoleARN:  roleARN,
+		Duration: stscreds.DefaultDuration,
+	}
+
+	fallbackRegion := getFallbackRegion(region)
+
+	partitional := &stscreds.AssumeRoleProvider{
+		Client: sts.New(c, &aws.Config{
+			Region:              aws.String(fallbackRegion),
+			Endpoint:            aws.String(getFallbackEndpoint(fallbackRegion)),
+			STSRegionalEndpoint: endpoints.RegionalSTSEndpoint,
+			HTTPClient:          &http.Client{Timeout: 1 * time.Minute},
+		}),
+		RoleARN:  roleARN,
+		Duration: stscreds.DefaultDuration,
+	}
+
+	return credentials.NewCredentials(&stsCredentialProvider{regional: regional, partitional: partitional})
+}
+
+func getFallbackRegion(region string) string {
+	partition := getEndpointPartition(region)
+	switch partition.ID() {
+	case bjsPartition:
+		return bjsFallbackRegion
+	case pdtPartition:
+		return pdtFallbackRegion
+	case dcaPartition:
+		return dcaFallbackRegion
+	case lckPartition:
+		return lckFallbackRegion
+	default:
+		return classicFallbackRegion
+	}
+}
+
+func getEndpointPartition(region string) endpoints.Partition {
+	partition, _ := endpoints.PartitionForRegion(endpoints.DefaultPartitions(), region)
+	return partition
+}
+
+func getFallbackEndpoint(region string) string {
+	partition := getEndpointPartition(region)
+	endpoint, _ := partition.EndpointFor("sts", region)
+	return endpoint.URL
 }

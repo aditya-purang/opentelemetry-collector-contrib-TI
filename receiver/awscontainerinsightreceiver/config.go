@@ -5,10 +5,15 @@ package awscontainerinsightreceiver // import "github.com/open-telemetry/opentel
 
 import (
 	"time"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/awsutil"
 )
 
 // Config defines configuration for aws ecs container metrics receiver.
 type Config struct {
+	// AWSSessionSettings contains the common configuration options
+	// for creating AWS session to communicate with backend
+	awsutil.AWSSessionSettings `mapstructure:",squash"`
 
 	// CollectionInterval is the interval at which metrics should be collected. The default is 60 second.
 	CollectionInterval time.Duration `mapstructure:"collection_interval"`
@@ -28,4 +33,31 @@ type Config struct {
 	// If false FullPodName label is not added
 	// The default value is false
 	AddFullPodNameMetricLabel bool `mapstructure:"add_full_pod_name_metric_label"`
+
+	// The "ContainerName" attribute is the name of the container
+	// If false ContainerName label is not added
+	// The default value is false
+	AddContainerNameMetricLabel bool `mapstructure:"add_container_name_metric_label"`
+
+	// ClusterName can be used to explicitly provide the Cluster's Name for scenarios where it's not
+	// possible to auto-detect it using EC2 tags.
+	ClusterName string `mapstructure:"cluster_name"`
+
+	// LeaderLockName is an optional attribute to override the name of the locking resource (e.g. config map) used during the leader
+	// election process for EKS Container Insights. The elected leader is responsible for scraping cluster level metrics.
+	// The default value is "otel-container-insight-clusterleader".
+	LeaderLockName string `mapstructure:"leader_lock_name"`
+
+	// LeaderLockUsingConfigMapOnly is an optional attribute to override the default behavior when obtaining a locking resource to be used during the leader
+	// election process for EKS Container Insights. By default, the leader election logic prefers a Lease and alternatively the combination of Lease & ConfigMap.
+	// When this flag is set to true, the leader election logic will be forced to use ConfigMap only. This flag mainly exists for backwards compatibility.
+	// The default value is false.
+	LeaderLockUsingConfigMapOnly bool `mapstructure:"leader_lock_using_config_map_only"`
+
+	// EnableControlPlaneMetrics enables additional metrics sourced from the Kubernetes API server /metrics prometheus endpoint
+	// The default value is false.
+	EnableControlPlaneMetrics bool `mapstructure:"enable_control_plane_metrics"`
+
+	// EnableAcceleratedComputeMetrics enabled features with accelerated compute resources where metrics are scraped from vendor specific sources
+	EnableAcceleratedComputeMetrics bool `mapstructure:"accelerated_compute_metrics"`
 }

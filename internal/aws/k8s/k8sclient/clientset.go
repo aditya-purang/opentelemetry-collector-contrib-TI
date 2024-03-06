@@ -9,11 +9,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -106,6 +108,28 @@ func InitSyncPollTimeout(pollTimeout time.Duration) Option {
 	}
 }
 
+// NodeSelector provides the option to provide a field selector
+// when retrieving information using the node client
+func NodeSelector(nodeSelector fields.Selector) Option {
+	return Option{
+		name: "nodeSelector:" + nodeSelector.String(),
+		set: func(kc *K8sClient) {
+			kc.nodeSelector = nodeSelector
+		},
+	}
+}
+
+// CaptureNodeLevelInfo allows one to specify whether node level info
+// should be captured and retained in memory
+func CaptureNodeLevelInfo(captureNodeLevelInfo bool) Option {
+	return Option{
+		name: "captureNodeLevelInfo:" + strconv.FormatBool(captureNodeLevelInfo),
+		set: func(kc *K8sClient) {
+			kc.captureNodeLevelInfo = captureNodeLevelInfo
+		},
+	}
+}
+
 func getStringifiedOptions(options ...Option) string {
 	opts := make([]string, len(options))
 	for i, option := range options {
@@ -160,6 +184,21 @@ type replicaSetClientWithStopper interface {
 	stopper
 }
 
+type deploymentClientWithStopper interface {
+	DeploymentClient
+	stopper
+}
+
+type daemonSetClientWithStopper interface {
+	DaemonSetClient
+	stopper
+}
+
+type statefulSetClientWithStopper interface {
+	StatefulSetClient
+	stopper
+}
+
 type K8sClient struct {
 	kubeConfigPath       string
 	initSyncPollInterval time.Duration
@@ -178,11 +217,23 @@ type K8sClient struct {
 	nodeMu sync.Mutex
 	node   nodeClientWithStopper
 
+	nodeSelector         fields.Selector
+	captureNodeLevelInfo bool
+
 	jobMu sync.Mutex
 	job   jobClientWithStopper
 
 	rsMu       sync.Mutex
 	replicaSet replicaSetClientWithStopper
+
+	dMu        sync.Mutex
+	deployment deploymentClientWithStopper
+
+	dsMu      sync.Mutex
+	daemonSet daemonSetClientWithStopper
+
+	ssMu        sync.Mutex
+	statefulSet statefulSetClientWithStopper
 
 	logger *zap.Logger
 }
@@ -227,6 +278,9 @@ func (c *K8sClient) init(logger *zap.Logger, options ...Option) error {
 	c.node = nil
 	c.job = nil
 	c.replicaSet = nil
+	c.deployment = nil
+	c.daemonSet = nil
+	c.statefulSet = nil
 
 	return nil
 }
@@ -264,7 +318,11 @@ func (c *K8sClient) ShutdownPodClient() {
 func (c *K8sClient) GetNodeClient() NodeClient {
 	c.nodeMu.Lock()
 	if c.node == nil {
-		c.node = newNodeClient(c.clientSet, c.logger, nodeSyncCheckerOption(c.syncChecker))
+		opts := []nodeClientOption{nodeSyncCheckerOption(c.syncChecker), captureNodeLevelInfoOption(c.captureNodeLevelInfo)}
+		if c.nodeSelector != nil {
+			opts = append(opts, nodeSelectorOption(c.nodeSelector))
+		}
+		c.node = newNodeClient(c.clientSet, c.logger, opts...)
 	}
 	c.nodeMu.Unlock()
 	return c.node
@@ -316,6 +374,66 @@ func (c *K8sClient) ShutdownReplicaSetClient() {
 	})
 }
 
+func (c *K8sClient) GetDeploymentClient() DeploymentClient {
+	var err error
+	c.dMu.Lock()
+	if c.deployment == nil || reflect.ValueOf(c.deployment).IsNil() {
+		c.deployment, err = newDeploymentClient(c.clientSet, c.logger, deploymentSyncCheckerOption(c.syncChecker))
+		if err != nil {
+			c.logger.Error("use an no-op deployment client instead because of error", zap.Error(err))
+			c.deployment = &noOpDeploymentClient{}
+		}
+	}
+	c.dMu.Unlock()
+	return c.deployment
+}
+
+func (c *K8sClient) ShutdownDeploymentClient() {
+	shutdownClient(c.deployment, &c.dMu, func() {
+		c.deployment = nil
+	})
+}
+
+func (c *K8sClient) GetDaemonSetClient() DaemonSetClient {
+	var err error
+	c.dsMu.Lock()
+	if c.daemonSet == nil || reflect.ValueOf(c.daemonSet).IsNil() {
+		c.daemonSet, err = newDaemonSetClient(c.clientSet, c.logger, daemonSetSyncCheckerOption(c.syncChecker))
+		if err != nil {
+			c.logger.Error("use an no-op daemonSet client instead because of error", zap.Error(err))
+			c.daemonSet = &noOpDaemonSetClient{}
+		}
+	}
+	c.dsMu.Unlock()
+	return c.daemonSet
+}
+
+func (c *K8sClient) ShutdownDaemonSetClient() {
+	shutdownClient(c.daemonSet, &c.dsMu, func() {
+		c.daemonSet = nil
+	})
+}
+
+func (c *K8sClient) GetStatefulSetClient() StatefulSetClient {
+	var err error
+	c.ssMu.Lock()
+	defer c.ssMu.Unlock()
+	if c.statefulSet == nil || reflect.ValueOf(c.statefulSet).IsNil() {
+		c.statefulSet, err = newStatefulSetClient(c.clientSet, c.logger, statefulSetSyncCheckerOption(c.syncChecker))
+		if err != nil {
+			c.logger.Error("use an no-op statefulSet client instead because of error", zap.Error(err))
+			c.statefulSet = &noOpStatefulSetClient{}
+		}
+	}
+	return c.statefulSet
+}
+
+func (c *K8sClient) ShutdownStatefulSetClient() {
+	shutdownClient(c.statefulSet, &c.ssMu, func() {
+		c.statefulSet = nil
+	})
+}
+
 func (c *K8sClient) GetClientSet() kubernetes.Interface {
 	return c.clientSet
 }
@@ -330,6 +448,9 @@ func (c *K8sClient) Shutdown() {
 	c.ShutdownNodeClient()
 	c.ShutdownJobClient()
 	c.ShutdownReplicaSetClient()
+	c.ShutdownDeploymentClient()
+	c.ShutdownDaemonSetClient()
+	c.ShutdownStatefulSetClient()
 
 	// remove the current instance of k8s client from map
 	for key, val := range optionsToK8sClient {

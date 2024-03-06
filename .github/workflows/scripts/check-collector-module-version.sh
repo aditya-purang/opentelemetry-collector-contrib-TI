@@ -38,9 +38,9 @@ check_collector_versions_correct() {
    # Loop through all the module files, checking the collector version
    for mod_file in $mod_files; do
       if [ "$(uname)" == "Darwin" ]; then
-         sed -i '' "s|$collector_module [^ ]*|$collector_module $collector_mod_version|g" $mod_file
+         sed -i '' "s|$collector_module [^ ]*$|$collector_module $collector_mod_version|g" $mod_file
       else
-         sed -i'' "s|$collector_module [^ ]*|$collector_module $collector_mod_version|g" $mod_file
+         sed -i'' "s|$collector_module [^ ]*$|$collector_module $collector_mod_version|g" $mod_file
       fi
    done
 }

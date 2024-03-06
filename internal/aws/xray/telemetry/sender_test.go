@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws/request"
 	awsmock "github.com/aws/aws-sdk-go/awstesting/mock"
 	"github.com/aws/aws-sdk-go/service/xray"
 	"github.com/stretchr/testify/assert"
@@ -37,6 +38,14 @@ func (m *mockClient) PutTelemetryRecords(input *xray.PutTelemetryRecordsInput) (
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*xray.PutTelemetryRecordsOutput), args.Error(1)
+}
+
+func (m *mockClient) Handlers() *request.Handlers {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(*request.Handlers)
 }
 
 func TestRotateRace(t *testing.T) {
@@ -93,6 +102,18 @@ func TestIncludeMetadata(t *testing.T) {
 	assert.Equal(t, "cfg_hostname", sender.hostname)
 	assert.Equal(t, "cfg_instance_id", sender.instanceID)
 	assert.Equal(t, "cfg_arn", sender.resourceARN)
+}
+
+func TestIncludeMetadataLocalMode(t *testing.T) {
+	cfg := Config{IncludeMetadata: true}
+	set := &awsutil.AWSSessionSettings{ResourceARN: "session_arn", LocalMode: true}
+	assert.NotPanics(t, func() {
+		opts := ToOptions(cfg, nil, set)
+		sender := newSender(&mockClient{}, opts...)
+		assert.Equal(t, "", sender.hostname)
+		assert.Equal(t, "", sender.instanceID)
+		assert.Equal(t, "session_arn", sender.resourceARN)
+	})
 }
 
 func TestQueueOverflow(t *testing.T) {

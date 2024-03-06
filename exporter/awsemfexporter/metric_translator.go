@@ -5,8 +5,10 @@ package awsemfexporter // import "github.com/open-telemetry/opentelemetry-collec
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/collector/pdata/pmetric"
@@ -27,9 +29,12 @@ const (
 	singleDimensionRollupOnly    = "SingleDimensionRollupOnly"
 
 	prometheusReceiver        = "prometheus"
+	containerInsightsReceiver = "awscontainerinsight"
 	attributeReceiver         = "receiver"
 	fieldPrometheusMetricType = "prom_metric_type"
 )
+
+var errMissingMetricsForEnhancedContainerInsights = errors.New("nil event detected with EnhancedContainerInsights enabled")
 
 var fieldPrometheusTypes = map[pmetric.MetricType]string{
 	pmetric.MetricTypeEmpty:     "",
@@ -124,6 +129,15 @@ func (mt metricTranslator) translateOTelToGroupedMetric(rm pmetric.ResourceMetri
 	if receiver, ok := rm.Resource().Attributes().Get(attributeReceiver); ok {
 		metricReceiver = receiver.Str()
 	}
+
+	if serviceName, ok := rm.Resource().Attributes().Get("service.name"); ok {
+		if strings.HasPrefix(serviceName.Str(), "containerInsightsKubeAPIServerScraper") ||
+			strings.HasPrefix(serviceName.Str(), "containerInsightsDCGMExporterScraper") {
+			// the prometheus metrics that come from the container insight receiver need to be clearly tagged as coming from container insights
+			metricReceiver = containerInsightsReceiver
+		}
+	}
+
 	for j := 0; j < ilms.Len(); j++ {
 		ilm := ilms.At(j)
 		if ilm.Scope().Name() != "" {
@@ -178,15 +192,17 @@ func translateGroupedMetricToCWMetric(groupedMetric *groupedMetric, config *Conf
 	}
 
 	var cWMeasurements []cWMeasurement
-	if len(config.MetricDeclarations) == 0 {
-		// If there are no metric declarations defined, translate grouped metric
-		// into the corresponding CW Measurement
-		cwm := groupedMetricToCWMeasurement(groupedMetric, config)
-		cWMeasurements = []cWMeasurement{cwm}
-	} else {
-		// If metric declarations are defined, filter grouped metric's metrics using
-		// metric declarations and translate into the corresponding list of CW Measurements
-		cWMeasurements = groupedMetricToCWMeasurementsWithFilters(groupedMetric, config)
+	if !config.DisableMetricExtraction { // If metric extraction is disabled, there is no need to compute & set the measurements
+		if len(config.MetricDeclarations) == 0 {
+			// If there are no metric declarations defined, translate grouped metric
+			// into the corresponding CW Measurement
+			cwm := groupedMetricToCWMeasurement(groupedMetric, config)
+			cWMeasurements = []cWMeasurement{cwm}
+		} else {
+			// If metric declarations are defined, filter grouped metric's metrics using
+			// metric declarations and translate into the corresponding list of CW Measurements
+			cWMeasurements = groupedMetricToCWMeasurementsWithFilters(groupedMetric, config)
+		}
 	}
 
 	return &cWMetrics{
@@ -384,9 +400,15 @@ func translateCWMetricToEMF(cWMetric *cWMetrics, config *Config) (*cwlogs.Event,
 		}
 	}
 
+	// For backwards compatibility, if EMF v0, always include version & timestamp (even for non-EMF events)
+	if config.Version == "0" {
+		fieldMap["Version"] = "0"
+		fieldMap["Timestamp"] = fmt.Sprint(cWMetric.timestampMs)
+	}
+
 	// Create EMF metrics if there are measurements
 	// https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch_Embedded_Metric_Format_Specification.html#CloudWatch_Embedded_Metric_Format_Specification_structure
-	if len(cWMetric.measurements) > 0 {
+	if len(cWMetric.measurements) > 0 && !config.DisableMetricExtraction {
 		if config.Version == "1" {
 			/* 	EMF V1
 				"Version": "1",
@@ -407,12 +429,7 @@ func translateCWMetricToEMF(cWMetric *cWMetrics, config *Config) (*cwlogs.Event,
 				"Timestamp":         cWMetric.timestampMs,
 			}
 
-		}
-	}
-
-	if config.Version == "0" {
-		fieldMap["Timestamp"] = fmt.Sprint(cWMetric.timestampMs)
-		if len(cWMetric.measurements) > 0 {
+		} else {
 			/* 	EMF V0
 				{
 					"Version": "0",
@@ -426,14 +443,41 @@ func translateCWMetricToEMF(cWMetric *cWMetrics, config *Config) (*cwlogs.Event,
 					"Timestamp": "1668387032641"
 			  	}
 			*/
-			fieldMap["Version"] = "0"
 			fieldMap["CloudWatchMetrics"] = cWMetric.measurements
+		}
+	} else if len(cWMetric.measurements) < 1 && config.EnhancedContainerInsights {
+		// Return nil if requests does not contain metrics when EnhancedContainerInsights is enabled
+		return nil, nil
+	}
+
+	// remove metrics from fieldMap
+	metricsMap := make(map[string]any)
+	for _, measurement := range cWMetric.measurements {
+		for _, metric := range measurement.Metrics {
+			metricName, exist := metric["Name"]
+			if exist {
+				v, ok := fieldMap[metricName]
+				if ok {
+					metricsMap[metricName] = v
+					delete(fieldMap, metricName)
+				}
+			}
 		}
 	}
 
 	pleMsg, err := json.Marshal(fieldMap)
 	if err != nil {
 		return nil, err
+	}
+
+	// append metrics json to pleMsg
+	if len(metricsMap) > 0 {
+		metricsMsg, err := json.Marshal(metricsMap)
+		if err != nil {
+			return nil, err
+		}
+		metricsMsg[0] = ','
+		pleMsg = append(pleMsg[:len(pleMsg)-1], metricsMsg...)
 	}
 
 	metricCreationTime := cWMetric.timestampMs
@@ -450,9 +494,12 @@ func translateCWMetricToEMF(cWMetric *cWMetrics, config *Config) (*cwlogs.Event,
 func translateGroupedMetricToEmf(groupedMetric *groupedMetric, config *Config, defaultLogStream string) (*cwlogs.Event, error) {
 	cWMetric := translateGroupedMetricToCWMetric(groupedMetric, config)
 	event, err := translateCWMetricToEMF(cWMetric, config)
-
 	if err != nil {
 		return nil, err
+	}
+	// Drop a nil putLogEvent for EnhancedContainerInsights
+	if config.EnhancedContainerInsights && event == nil {
+		return nil, errMissingMetricsForEnhancedContainerInsights
 	}
 
 	logGroup := groupedMetric.metadata.logGroup

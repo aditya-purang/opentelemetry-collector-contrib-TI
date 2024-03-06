@@ -95,6 +95,10 @@ func getPrefixByMetricType(mType string) string {
 	service := "service_"
 	cluster := "cluster_"
 	namespace := "namespace_"
+	deployment := "deployment_"
+	daemonSet := "daemonset_"
+	statefulSet := "statefulset_"
+	replicaSet := "replicaset_"
 
 	switch mType {
 	case TypeInstance:
@@ -131,6 +135,14 @@ func getPrefixByMetricType(mType string) string {
 		prefix = service
 	case TypeClusterNamespace:
 		prefix = namespace
+	case TypeClusterDeployment:
+		prefix = deployment
+	case TypeClusterDaemonSet:
+		prefix = daemonSet
+	case TypeClusterStatefulSet:
+		prefix = statefulSet
+	case TypeClusterReplicaSet:
+		prefix = replicaSet
 	default:
 		log.Printf("E! Unexpected MetricType: %s", mType)
 	}
@@ -152,6 +164,49 @@ func RemovePrefix(mType string, metricName string) string {
 // GetUnitForMetric returns unit for a given metric
 func GetUnitForMetric(metric string) string {
 	return metricToUnitMap[metric]
+}
+
+type FieldsAndTagsPair struct {
+	Fields map[string]any
+	Tags   map[string]string
+}
+
+// ConvertToFieldsAndTags converts OTLP metric to a field containing metric values and a tag containing for decoration
+func ConvertToFieldsAndTags(m pmetric.Metric, logger *zap.Logger) []FieldsAndTagsPair {
+	var converted []FieldsAndTagsPair
+	if m.Name() == "" {
+		return converted
+	}
+
+	var dps pmetric.NumberDataPointSlice
+	switch m.Type() {
+	case pmetric.MetricTypeGauge:
+		dps = m.Gauge().DataPoints()
+	case pmetric.MetricTypeSum:
+		dps = m.Sum().DataPoints()
+	default:
+		logger.Warn("Unsupported metric type", zap.String("metric", m.Name()), zap.String("type", m.Type().String()))
+	}
+
+	if dps.Len() == 0 {
+		logger.Warn("Metric has no datapoint", zap.String("metric", m.Name()))
+	}
+
+	for i := 0; i < dps.Len(); i++ {
+		tags := make(map[string]string)
+		attrs := dps.At(i).Attributes()
+		attrs.Range(func(k string, v pcommon.Value) bool {
+			tags[k] = v.AsString()
+			return true
+		})
+		converted = append(converted, FieldsAndTagsPair{
+			Fields: map[string]any{
+				m.Name(): nil, // metric value not needed for attribute decoration
+			},
+			Tags: tags,
+		})
+	}
+	return converted
 }
 
 // ConvertToOTLPMetrics converts a field containing metric values and a tag containing the relevant labels to OTLP metrics

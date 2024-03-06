@@ -1,1 +1,6 @@
+connector/servicegraphconnector
+extension/awsmiddleware
+extension/encoding
 extension/observer
+processor/servicegraphprocessor
+receiver/kafkareceiver
