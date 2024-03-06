@@ -67,7 +67,7 @@ func createDefaultConfig() component.Config {
 		ClusterName:                 defaultClusterName,
 		LeaderLockName:              defaultLeaderLockName,
 		EnableControlPlaneMetrics:   defaultEnableControlPlaneMetrics,
-		EnableAwsNeuronMetric:       defaultEnableAwsNeuronMetrics,
+		EnableAwsNeuronMetrics:      defaultEnableAwsNeuronMetrics,
 	}
 }
 
