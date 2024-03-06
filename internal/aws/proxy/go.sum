@@ -1,3 +1,4 @@
+github.com/aws/aws-sdk-go v1.47.10/go.mod h1:LF8svs817+Nz+DmiMQKTO3ubZ/6IaTpq3TjupRn3Eqk=
 github.com/aws/aws-sdk-go v1.50.17 h1:KsbzUKDgGNlkDHGvoQDhiJ63a9jtZd+O+/s3pTOr/ns=
 github.com/aws/aws-sdk-go v1.50.17/go.mod h1:LF8svs817+Nz+DmiMQKTO3ubZ/6IaTpq3TjupRn3Eqk=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
@@ -37,10 +38,13 @@ github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+
 github.com/stretchr/objx v0.5.0 h1:1zr/of2m5FGMsad5YfcqgdqdWrIhu+EBEJRhR1U7z/c=
 github.com/stretchr/testify v1.8.4 h1:CcVxjf3Q8PM0mHUKJCdn+eZZtm5yQwehR5yeSVQQcUk=
 github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXlSw2iwfAo=
+go.opentelemetry.io/collector/config/confignet v0.89.0/go.mod h1:cpO8JYWGONaViOygKVw+Hd2UoBcn2cUiyi0WWeFTwJY=
 go.opentelemetry.io/collector/config/confignet v0.95.0 h1:GGAq0E7DFPIcwyq6h0OOPEfLyym/7LUIOB2ij6l3xtE=
 go.opentelemetry.io/collector/config/confignet v0.95.0/go.mod h1:BVw5xkQ7TH2wH75cbph+dtOoxq1baWLuhdSYIAvuVu0=
+go.opentelemetry.io/collector/config/configopaque v0.89.0/go.mod h1:TPCHaU+QXiEV+JXbgyr6mSErTI9chwQyasDVMdJr3eY=
 go.opentelemetry.io/collector/config/configopaque v1.2.0 h1:ncnAuq4px3yREsirivGUbwr36xXEKa3K6JTOBNGlbtc=
 go.opentelemetry.io/collector/config/configopaque v1.2.0/go.mod h1:6BAnSe6wok2Sg3tiNuapBbLnrduyMwzsBzbfgUSbDnI=
+go.opentelemetry.io/collector/config/configtls v0.89.0/go.mod h1:NlE4elqXoyFfzQvYfzgH6uOU1zNVa+5tt6EIq52TJ9Y=
 go.opentelemetry.io/collector/config/configtls v0.95.0 h1:LB6B5vCXwZV77jWPNhdvsgkyY8CFv8gdsRjfQS2Rioc=
 go.opentelemetry.io/collector/config/configtls v0.95.0/go.mod h1:661iHIlhQTKIuUUEkQmuoyek1oq46XlsKjLu3JIzJrE=
 go.opentelemetry.io/collector/confmap v0.95.0 h1:0oZwSUaeKTDCP7eewFpQSD+9SxXspiaJWjZDQYGGars=

@@ -1,6 +1,8 @@
 module github.com/open-telemetry/opentelemetry-collector-contrib/extension/awsproxy
 
-go 1.20
+go 1.21
+
+toolchain go1.22.0
 
 require (
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/proxy v0.89.0
@@ -33,7 +35,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	go.opentelemetry.io/collector/config/configopaque v0.89.0 // indirect
 	go.opentelemetry.io/collector/config/configtelemetry v0.89.0 // indirect
-	go.opentelemetry.io/collector/featuregate v1.0.0-rcv0018 // indirect
+	go.opentelemetry.io/collector/featuregate v1.2.0 // indirect
 	go.opentelemetry.io/collector/pdata v1.0.0-rcv0018 // indirect
 	go.opentelemetry.io/otel v1.20.0 // indirect
 	go.opentelemetry.io/otel/metric v1.20.0 // indirect
