@@ -518,68 +518,43 @@ func translateGroupedMetricToEmf(groupedMetric *groupedMetric, config *Config, d
 }
 
 func logGroupMetric(groupedMetric *groupedMetric, config *Config) {
-	logMetrics := false
+	var finalLog strings.Builder
+	var labels strings.Builder
+	var metrics strings.Builder
+	labels.WriteString("\n\tlabels : {")
 	for key, val := range groupedMetric.labels {
-		if strings.Contains(key, "neuron") || strings.Contains(key, "Neuron") || strings.Contains(val, "neuron") || strings.Contains(val, "Neuron") {
-			logMetrics = true
-		}
-		if logMetrics {
-			break
-		}
+		labels.WriteString(fmt.Sprintf("\n\t\tKey: %s, Value: %s", key, val))
 	}
+	labels.WriteString("\n\t}")
 
-	if logMetrics {
-		var finalLog strings.Builder
-		var labels strings.Builder
-		var metrics strings.Builder
-		labels.WriteString("\n\tlabels : {")
-		for key, val := range groupedMetric.labels {
-			labels.WriteString(fmt.Sprintf("\n\t\tKey: %s, Value: %s", key, val))
-		}
-		labels.WriteString("\n\t}")
-
-		metrics.WriteString("\n\tmetrics : {")
-		for key, val := range groupedMetric.metrics {
-			metrics.WriteString(fmt.Sprintf("\n\t\t %s = %v of %s", key, val.value, val.unit))
-		}
-		metrics.WriteString("\n\t}")
-
-		finalLog.WriteString("\n{\n" + labels.String() + "\n," + metrics.String() + "\n}")
-
-		config.logger.Info("Grouped_metrics_for_neuron : " + finalLog.String())
+	metrics.WriteString("\n\tmetrics : {")
+	for key, val := range groupedMetric.metrics {
+		metrics.WriteString(fmt.Sprintf("\n\t\t %s = %v of %s", key, val.value, val.unit))
 	}
+	metrics.WriteString("\n\t}")
+
+	finalLog.WriteString("\n{\n" + labels.String() + "\n," + metrics.String() + "\n}")
+
+	config.logger.Info("Grouped_metrics_for_neuron : " + finalLog.String())
 }
 
 func logcWMetric(cWMetrics *cWMetrics, config *Config) {
-	logMetrics := false
-
-	for key, _ := range cWMetrics.fields {
-		if strings.Contains(key, "neuron") || strings.Contains(key, "Neuron") {
-			logMetrics = true
-		}
-		if logMetrics {
-			break
-		}
+	var finalLog strings.Builder
+	var fields strings.Builder
+	var metrics strings.Builder
+	fields.WriteString("\n\tfields : {")
+	for key, val := range cWMetrics.fields {
+		fields.WriteString(fmt.Sprintf("\n\t\tKey: %s, Value: %v", key, val))
 	}
+	fields.WriteString("\n\t}")
 
-	if logMetrics {
-		var finalLog strings.Builder
-		var fields strings.Builder
-		var metrics strings.Builder
-		fields.WriteString("\n\tfields : {")
-		for key, val := range cWMetrics.fields {
-			fields.WriteString(fmt.Sprintf("\n\t\tKey: %s, Value: %v", key, val))
-		}
-		fields.WriteString("\n\t}")
-
-		metrics.WriteString("\n\tmetrics : {")
-		for _, val := range cWMetrics.measurements {
-			metrics.WriteString(fmt.Sprintf("\n\t\t {{%v}, {%v}, %s},", val.Metrics, val.Dimensions, val.Namespace))
-		}
-		metrics.WriteString("\n\t}")
-
-		finalLog.WriteString("\n{\n" + fields.String() + "\n," + metrics.String() + "\n}")
-
-		config.logger.Info("CW_metrics_for_neuron : " + finalLog.String())
+	metrics.WriteString("\n\tmetrics : {")
+	for _, val := range cWMetrics.measurements {
+		metrics.WriteString(fmt.Sprintf("\n\t\t {{%v}, {%v}, %s},", val.Metrics, val.Dimensions, val.Namespace))
 	}
+	metrics.WriteString("\n\t}")
+
+	finalLog.WriteString("\n{\n" + fields.String() + "\n," + metrics.String() + "\n}")
+
+	config.logger.Info("CW_metrics_for_neuron : " + finalLog.String())
 }
