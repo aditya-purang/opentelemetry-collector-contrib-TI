@@ -495,6 +495,7 @@ func translateCWMetricToEMF(cWMetric *cWMetrics, config *Config) (*cwlogs.Event,
 func translateGroupedMetricToEmf(groupedMetric *groupedMetric, config *Config, defaultLogStream string) (*cwlogs.Event, error) {
 	logGroupMetric(groupedMetric, config)
 	cWMetric := translateGroupedMetricToCWMetric(groupedMetric, config)
+	logcWMetric(cWMetric, config)
 	event, err := translateCWMetricToEMF(cWMetric, config)
 	if err != nil {
 		return nil, err
