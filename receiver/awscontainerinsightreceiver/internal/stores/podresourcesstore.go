@@ -122,7 +122,7 @@ func (p *PodResourcesStore) updateMaps() {
 		return
 	}
 
-	p.logger.Info("PodResources updating device info with result : " + devicePods.String())
+	// p.logger.Info("PodResources updating device info with result : " + devicePods.String())
 	for _, pod := range devicePods.GetPodResources() {
 		for _, container := range pod.GetContainers() {
 			for _, device := range container.GetDevices() {

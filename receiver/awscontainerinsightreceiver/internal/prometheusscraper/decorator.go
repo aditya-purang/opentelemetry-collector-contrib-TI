@@ -61,7 +61,7 @@ func (dc *DecorateConsumer) ConsumeMetrics(ctx context.Context, md pmetric.Metri
 			}
 		}
 	}
-	dc.logMd(md)
+	// dc.logMd(md)
 	return dc.NextConsumer.ConsumeMetrics(ctx, md)
 }
 
