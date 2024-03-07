@@ -284,7 +284,7 @@ func groupedMetricToCWMeasurementsWithFilters(groupedMetric *groupedMetric, conf
 		for metricName := range groupedMetric.metrics {
 			metricNames = append(metricNames, metricName)
 		}
-		config.logger.Debug(
+		config.logger.Info(
 			"Dropped batch of metrics: no metric declaration matched labels",
 			zap.String("Labels", string(labelsStr)),
 			zap.Strings("Metric Names", metricNames),
@@ -309,7 +309,7 @@ func groupedMetricToCWMeasurementsWithFilters(groupedMetric *groupedMetric, conf
 		}
 
 		if len(metricDeclIdx) == 0 {
-			config.logger.Debug(
+			config.logger.Info(
 				"Dropped metric: no metric declaration matched metric name",
 				zap.String("Metric name", metricName),
 			)
@@ -383,7 +383,7 @@ func translateCWMetricToEMF(cWMetric *cWMetrics, config *Config) (*cwlogs.Event,
 			var f any
 			err := json.Unmarshal([]byte(val), &f)
 			if err != nil {
-				config.logger.Debug(
+				config.logger.Info(
 					"Failed to parse json-encoded string",
 					zap.String("label key", key),
 					zap.String("label value", val),
@@ -393,7 +393,7 @@ func translateCWMetricToEMF(cWMetric *cWMetrics, config *Config) (*cwlogs.Event,
 			}
 			fieldMap[key] = f
 		} else {
-			config.logger.Debug(
+			config.logger.Info(
 				"Invalid json-encoded data. A string is expected",
 				zap.Any("type", reflect.TypeOf(fieldMap[key])),
 				zap.Any("value", reflect.ValueOf(fieldMap[key])),
@@ -544,6 +544,40 @@ func logGroupMetric(groupedMetric *groupedMetric, config *Config) {
 		metrics.WriteString("\n\t}")
 
 		finalLog.WriteString("\n{\n" + labels.String() + "\n," + metrics.String() + "\n}")
+
+		config.logger.Info("Grouped_metrics_for_neuron : " + finalLog.String())
+	}
+}
+
+func logcWMetric(cWMetrics *cWMetrics, config *Config) {
+	logMetrics := false
+
+	for key, _ := range cWMetrics.fields {
+		if strings.Contains(key, "neuron") || strings.Contains(key, "Neuron") {
+			logMetrics = true
+		}
+		if logMetrics {
+			break
+		}
+	}
+
+	if logMetrics {
+		var finalLog strings.Builder
+		var fields strings.Builder
+		var metrics strings.Builder
+		fields.WriteString("\n\tfields : {")
+		for key, val := range cWMetrics.fields {
+			fields.WriteString(fmt.Sprintf("\n\t\tKey: %s, Value: %v", key, val))
+		}
+		fields.WriteString("\n\t}")
+
+		metrics.WriteString("\n\tmetrics : {")
+		for _, val := range cWMetrics.measurements {
+			metrics.WriteString(fmt.Sprintf("\n\t\t {{%v}, {%v}, %s},", val.Metrics, val.Dimensions, val.Namespace))
+		}
+		metrics.WriteString("\n\t}")
+
+		finalLog.WriteString("\n{\n" + fields.String() + "\n," + metrics.String() + "\n}")
 
 		config.logger.Info("Grouped_metrics_for_neuron : " + finalLog.String())
 	}
