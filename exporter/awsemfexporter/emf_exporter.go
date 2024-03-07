@@ -148,6 +148,7 @@ func (emf *emfExporter) pushMetricsData(_ context.Context, md pmetric.Metrics) e
 			if putLogEvent != nil &&
 				putLogEvent.InputLogEvent != nil &&
 				putLogEvent.InputLogEvent.Message != nil {
+				emf.config.logger.Info("Emf_log_after_processing" + *putLogEvent.InputLogEvent.Message)
 				fmt.Println(*putLogEvent.InputLogEvent.Message)
 			}
 		} else if strings.EqualFold(outputDestination, outputDestinationCloudWatch) {
