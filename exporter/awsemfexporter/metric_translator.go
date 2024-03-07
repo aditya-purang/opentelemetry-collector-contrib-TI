@@ -580,6 +580,6 @@ func logcWMetric(cWMetrics *cWMetrics, config *Config) {
 
 		finalLog.WriteString("\n{\n" + fields.String() + "\n," + metrics.String() + "\n}")
 
-		config.logger.Info("Grouped_metrics_for_neuron : " + finalLog.String())
+		config.logger.Info("CW_metrics_for_neuron : " + finalLog.String())
 	}
 }
