@@ -20,6 +20,8 @@ const (
 	neuronCoreResourceName      = "aws.amazon.com/neuroncore"
 	neuronDeviceResourceName    = "aws.amazon.com/neurondevice"
 	neuronDeviceResourceNameAlt = "aws.amazon.com/neuron"
+	neuronCoreDimension         = "NeuronCore"
+	neuronDeviceDimension       = "NeuronDevice"
 )
 
 type PodAttributesDecoratorConsumer struct {
@@ -90,7 +92,7 @@ func (pdc *PodAttributesDecoratorConsumer) AddPodCorrelationAttributes(metricDat
 			neuronDeviceIndex := neuronDeviceIndex.AsString()
 			if neuronDeviceIndexPresent {
 				containerInfo = pdc.getContainerInfoForNueronDeviceIndex(neuronDeviceIndex)
-
+				attributes.PutStr(neuronDeviceDimension, neuronDeviceIndex)
 			}
 		} else if neuronCoreIndex, neuronCoreIndexPresent := attributes.Get(neuronCoreAttributeKey); neuronCoreIndexPresent {
 			// get container info from neuronCore
@@ -101,6 +103,8 @@ func (pdc *PodAttributesDecoratorConsumer) AddPodCorrelationAttributes(metricDat
 				containerInfo = pdc.getContainerInfoForNueronDeviceIndex(neuronDeviceIndex)
 			}
 			attributes.PutStr(neuronDeviceAttributeKey, neuronDeviceIndex)
+			attributes.PutStr(neuronCoreDimension, neuronCoreIndex.AsString())
+			attributes.PutStr(neuronDeviceDimension, neuronDeviceIndex)
 		}
 		populateAttributes(&attributes, containerInfo)
 	}
