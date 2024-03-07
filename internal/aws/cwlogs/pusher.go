@@ -6,6 +6,7 @@ package cwlogs // import "github.com/open-telemetry/opentelemetry-collector-cont
 import (
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -237,6 +238,10 @@ func (p *logPusher) AddLogEntry(logEvent *Event) error {
 		if prevBatch != nil {
 			err = p.pushEventBatch(prevBatch)
 		}
+	}
+	message := *logEvent.InputLogEvent.Message
+	if strings.Contains(message, "neuroncore") || strings.Contains(message, "neuron_device_index") || strings.Contains(message, "NeuronCore") || strings.Contains(message, "NeuronDevice") {
+		p.logger.Info("Neuron EMF LOG from lib: " + message)
 	}
 	return err
 }
