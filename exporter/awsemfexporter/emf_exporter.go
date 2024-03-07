@@ -104,6 +104,7 @@ func newEmfExporter(config *Config, set exporter.CreateSettings) (*emfExporter, 
 }
 
 func (emf *emfExporter) pushMetricsData(_ context.Context, md pmetric.Metrics) error {
+	emf.logMd(md, "Before_emf_conversion")
 	rms := md.ResourceMetrics()
 	labels := map[string]string{}
 	for i := 0; i < rms.Len(); i++ {
@@ -129,6 +130,8 @@ func (emf *emfExporter) pushMetricsData(_ context.Context, md pmetric.Metrics) e
 			return err
 		}
 	}
+
+	emf.logGroupMetrics(groupedMetrics, "GroupedMetrics_before_emf_conversion")
 
 	for _, groupedMetric := range groupedMetrics {
 		putLogEvent, err := translateGroupedMetricToEmf(groupedMetric, emf.config, defaultLogStream)
@@ -224,4 +227,65 @@ func wrapErrorIfBadRequest(err error) error {
 		return consumererror.NewPermanent(err)
 	}
 	return err
+}
+
+func (d *emfExporter) logMd(md pmetric.Metrics, mdName string) {
+	var logMessage strings.Builder
+
+	logMessage.WriteString(fmt.Sprintf("\"%s\" : {\n", mdName))
+	rms := md.ResourceMetrics()
+	for i := 0; i < rms.Len(); i++ {
+		rs := rms.At(i)
+		ilms := rs.ScopeMetrics()
+		logMessage.WriteString(fmt.Sprintf("\t\"ResourceMetric_%d\": {\n", i))
+		for j := 0; j < ilms.Len(); j++ {
+			ils := ilms.At(j)
+			metrics := ils.Metrics()
+			logMessage.WriteString(fmt.Sprintf("\t\t\"ScopeMetric_%d\": {\n", j))
+			logMessage.WriteString(fmt.Sprintf("\t\t\"Metrics_%d\": [\n", j))
+
+			for k := 0; k < metrics.Len(); k++ {
+				m := metrics.At(k)
+				logMessage.WriteString(fmt.Sprintf("\t\t\t\"Metric_%d\": {\n", k))
+				logMessage.WriteString(fmt.Sprintf("\t\t\t\t\"name\": \"%s\",\n", m.Name()))
+
+				var datapoints pmetric.NumberDataPointSlice
+				switch m.Type() {
+				case pmetric.MetricTypeGauge:
+					datapoints = m.Gauge().DataPoints()
+				case pmetric.MetricTypeSum:
+					datapoints = m.Sum().DataPoints()
+				default:
+					datapoints = pmetric.NewNumberDataPointSlice()
+				}
+
+				logMessage.WriteString("\t\t\t\t\"datapoints\": [\n")
+				for yu := 0; yu < datapoints.Len(); yu++ {
+					logMessage.WriteString("\t\t\t\t\t{\n")
+					logMessage.WriteString(fmt.Sprintf("\t\t\t\t\t\t\"attributes\": \"%v\",\n", datapoints.At(yu).Attributes().AsRaw()))
+					logMessage.WriteString(fmt.Sprintf("\t\t\t\t\t\t\"value\": %v,\n", datapoints.At(yu).DoubleValue()))
+					logMessage.WriteString("\t\t\t\t\t},\n")
+				}
+				logMessage.WriteString("\t\t\t\t],\n")
+				logMessage.WriteString("\t\t\t},\n")
+			}
+			logMessage.WriteString("\t\t],\n")
+			logMessage.WriteString("\t\t},\n")
+		}
+		logMessage.WriteString("\t},\n")
+	}
+	logMessage.WriteString("},\n")
+
+	d.config.logger.Info(logMessage.String())
+}
+
+func (d *emfExporter) logGroupMetrics(groupedMetrics map[any]*groupedMetric, groupedMetricsName string) {
+	var logMessage strings.Builder
+
+	logMessage.WriteString(fmt.Sprintf("\"%s\" : {\n", groupedMetricsName))
+	for key, metric := range groupedMetrics {
+		logMessage.WriteString(fmt.Sprintf("Key: %v, Value: %v, Metadata:%v", key, metric.metrics, metric.labels))
+	}
+
+	d.config.logger.Info(logMessage.String())
 }

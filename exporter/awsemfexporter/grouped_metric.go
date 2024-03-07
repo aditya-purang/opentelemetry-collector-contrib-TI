@@ -52,6 +52,10 @@ func addToGroupedMetric(pmd pmetric.Metric, groupedMetrics map[any]*groupedMetri
 		for _, dp := range dps {
 			labels := dp.labels
 
+			if strings.Contains(dp.name, "neuron") || strings.Contains(dp.name, "Neuron") {
+				logger.Info("processing NeuronDatapoint " + dp.name)
+			}
+
 			if metricType, ok := labels["Type"]; ok {
 				if (metricType == "Pod" || metricType == "Container") && config.EKSFargateContainerInsightsEnabled {
 					addKubernetesWrapper(labels)
