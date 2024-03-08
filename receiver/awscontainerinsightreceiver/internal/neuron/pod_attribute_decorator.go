@@ -103,7 +103,6 @@ func (pdc *PodAttributesDecoratorConsumer) AddPodCorrelationAttributes(metricDat
 				containerInfo = pdc.getContainerInfoForNueronDeviceIndex(neuronDeviceIndex)
 			}
 			attributes.PutStr(neuronDeviceAttributeKey, neuronDeviceIndex)
-			attributes.PutStr(neuronCoreDimension, neuronCoreIndex.AsString())
 			attributes.PutStr(neuronDeviceDimension, neuronDeviceIndex)
 		}
 		populateAttributes(&attributes, containerInfo)
