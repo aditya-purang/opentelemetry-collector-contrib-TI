@@ -269,6 +269,8 @@ func groupedMetricToCWMeasurement(groupedMetric *groupedMetric, config *Config) 
 func groupedMetricToCWMeasurementsWithFilters(groupedMetric *groupedMetric, config *Config) (cWMeasurements []cWMeasurement) {
 	labels := groupedMetric.labels
 
+	logMetricDeclarations(config.MetricDeclarations, config, "AllDeclarations")
+
 	// Filter metric declarations by labels
 	metricDeclarations := make([]*MetricDeclaration, 0, len(config.MetricDeclarations))
 	for _, metricDeclaration := range config.MetricDeclarations {
@@ -276,6 +278,8 @@ func groupedMetricToCWMeasurementsWithFilters(groupedMetric *groupedMetric, conf
 			metricDeclarations = append(metricDeclarations, metricDeclaration)
 		}
 	}
+
+	logMetricDeclarations(metricDeclarations, config, "AfterFilteringDeclarations")
 
 	// If the whole batch of metrics don't match any metric declarations, drop them
 	if len(metricDeclarations) == 0 {
@@ -557,4 +561,12 @@ func logcWMetric(cWMetrics *cWMetrics, config *Config) {
 	finalLog.WriteString("\n{\n" + fields.String() + "\n," + metrics.String() + "\n}")
 
 	config.logger.Info("CW_metrics_for_neuron : " + finalLog.String())
+}
+
+func logMetricDeclarations(declarations []*MetricDeclaration, config *Config, name string) {
+	var decString strings.Builder
+	for i, declaration := range declarations {
+		decString.WriteString(fmt.Sprintf("\n declaration_%d : {%v : {%v}},", i, declaration.MetricNameSelectors, declaration.Dimensions))
+	}
+	config.logger.Info(name + " : " + decString.String())
 }
