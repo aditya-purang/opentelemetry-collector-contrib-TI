@@ -69,6 +69,13 @@ func GetNueronMetricRelabelConfigs(hostinfo prometheusscraper.HostInfoProvider) 
 			Action:       relabel.Replace,
 		},
 		{
+			SourceLabels: model.LabelNames{"instance_type"},
+			TargetLabel:  "InstanceType",
+			Regex:        relabel.MustNewRegexp("(.*)"),
+			Replacement:  "${1}",
+			Action:       relabel.Replace,
+		},
+		{
 			SourceLabels: model.LabelNames{"neuroncore"},
 			TargetLabel:  "DeviceId",
 			Regex:        relabel.MustNewRegexp("(.*)"),
