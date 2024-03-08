@@ -96,7 +96,7 @@ func GetNueronMetricRelabelConfigs(hostinfo prometheusscraper.HostInfoProvider) 
 			SourceLabels: model.LabelNames{"instance_id"},
 			TargetLabel:  "NodeName",
 			Regex:        relabel.MustNewRegexp("(.*)"),
-			Replacement:  os.Getenv("NODE_NAME"),
+			Replacement:  os.Getenv("K8S_NODE_NAME"),
 			Action:       relabel.Replace,
 		},
 	}
