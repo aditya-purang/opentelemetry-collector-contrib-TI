@@ -4,6 +4,7 @@
 package neuron
 
 import (
+	"os"
 	"time"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/prometheusscraper"
@@ -77,7 +78,7 @@ func GetNueronMetricRelabelConfigs(hostinfo prometheusscraper.HostInfoProvider) 
 		},
 		{
 			SourceLabels: model.LabelNames{"neuroncore"},
-			TargetLabel:  "DeviceId",
+			TargetLabel:  "NeuronCore",
 			Regex:        relabel.MustNewRegexp("(.*)"),
 			Replacement:  "${1}",
 			Action:       relabel.Replace,
@@ -89,6 +90,13 @@ func GetNueronMetricRelabelConfigs(hostinfo prometheusscraper.HostInfoProvider) 
 			TargetLabel:  "ClusterName",
 			Regex:        relabel.MustNewRegexp("(.*)"),
 			Replacement:  hostinfo.GetClusterName(),
+			Action:       relabel.Replace,
+		},
+		{
+			SourceLabels: model.LabelNames{"instance_id"},
+			TargetLabel:  "NodeName",
+			Regex:        relabel.MustNewRegexp("(.*)"),
+			Replacement:  os.Getenv("NODE_NAME"),
 			Action:       relabel.Replace,
 		},
 	}

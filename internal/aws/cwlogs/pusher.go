@@ -238,9 +238,6 @@ func (p *logPusher) AddLogEntry(logEvent *Event) error {
 			err = p.pushEventBatch(prevBatch)
 		}
 	}
-	message := *logEvent.InputLogEvent.Message
-	p.logger.Info("EMF LOG from lib: " + message)
-
 	return err
 }
 
