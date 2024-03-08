@@ -232,7 +232,7 @@ func wrapErrorIfBadRequest(err error) error {
 
 func (d *emfExporter) logMd(md pmetric.Metrics, mdName string) {
 	var logMessage strings.Builder
-
+	isNeuronMetric := false
 	logMessage.WriteString(fmt.Sprintf("\"%s\" : {\n", mdName))
 	rms := md.ResourceMetrics()
 	for i := 0; i < rms.Len(); i++ {
@@ -249,6 +249,10 @@ func (d *emfExporter) logMd(md pmetric.Metrics, mdName string) {
 				m := metrics.At(k)
 				logMessage.WriteString(fmt.Sprintf("\t\t\t\"Metric_%d\": {\n", k))
 				logMessage.WriteString(fmt.Sprintf("\t\t\t\t\"name\": \"%s\",\n", m.Name()))
+
+				if strings.Contains(m.Name(), "neuron_") {
+					isNeuronMetric = true
+				}
 
 				var datapoints pmetric.NumberDataPointSlice
 				switch m.Type() {
@@ -277,7 +281,9 @@ func (d *emfExporter) logMd(md pmetric.Metrics, mdName string) {
 	}
 	logMessage.WriteString("},\n")
 
-	d.config.logger.Info(logMessage.String())
+	if isNeuronMetric {
+		d.config.logger.Info(logMessage.String())
+	}
 }
 
 func (d *emfExporter) logGroupMetrics(groupedMetrics map[any]*groupedMetric, groupedMetricsName string) {
